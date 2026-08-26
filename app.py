@@ -81,7 +81,13 @@ if archivo_subido is not None:
 
     with tab_dinamica:
         columnas_agrupables = ["region", "comuna", "producto", "tipo_tarea", "usuario"]
-        agrupar_por = st.selectbox("Agrupar por", columnas_agrupables)
+
+        with st.container(border=True):
+            columna_selector, _ = st.columns([1, 2])
+            with columna_selector:
+                agrupar_por = st.selectbox("Agrupar por", columnas_agrupables)
+
+        st.write("")
 
         agregaciones = {"instalaciones": ("cod_oferta", "count")}
         for columna in columnas_materiales:
