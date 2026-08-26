@@ -90,7 +90,14 @@ if archivo_subido is not None:
         resumen_dinamico = reporte_final.groupby(agrupar_por).agg(**agregaciones).reset_index()
         resumen_dinamico = resumen_dinamico.sort_values("instalaciones", ascending=False)
 
+        st.write("")
+
         with st.container(border=True):
             st.subheader(f"Resumen por {agrupar_por}")
             st.dataframe(resumen_dinamico, use_container_width=True)
+
+        st.write("")
+
+        with st.container(border=True):
+            st.subheader(f"Instalaciones por {agrupar_por}")
             st.bar_chart(resumen_dinamico.set_index(agrupar_por)["instalaciones"])
