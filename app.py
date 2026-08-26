@@ -29,13 +29,20 @@ with st.container(border=True):
 if archivo_subido is not None:
     hoja_instalaciones = encontrar_hoja(archivo_subido, {"cod_oferta", "producto", "region"})
     hoja_materiales = encontrar_hoja(archivo_subido, {"contrato_codigo", "material_unificado", "material_usado_cantidad"})
+    hoja_apk = encontrar_hoja(archivo_subido, {"cod_oferta", "p_apk_mundogo"})
 
     instalaciones = pd.read_excel(archivo_subido, sheet_name=hoja_instalaciones)
     instalaciones = instalaciones.dropna(subset=["cod_oferta"])
+    instalaciones["fecha_ejecucion"] = pd.to_datetime(instalaciones["fecha_ejecucion"]).dt.date
+
     materiales = pd.read_excel(archivo_subido, sheet_name=hoja_materiales)
+    apk = pd.read_excel(archivo_subido, sheet_name=hoja_apk)
 
     resumen_materiales = materiales.groupby(["contrato_codigo", "material_unificado"])["material_usado_cantidad"].sum()
     tabla_materiales = resumen_materiales.unstack(fill_value=0).reset_index()
+
+    apk_reducido = apk[["cod_oferta", "p_apk_mundogo"]].drop_duplicates(subset="cod_oferta")
+    apk_reducido = apk_reducido.rename(columns={"p_apk_mundogo": "APK"})
 
     reporte = instalaciones.merge(
         tabla_materiales,
@@ -43,14 +50,16 @@ if archivo_subido is not None:
         right_on="contrato_codigo",
         how="left",
     )
+    reporte = reporte.merge(apk_reducido, on="cod_oferta", how="left")
 
     columnas_materiales = [c for c in tabla_materiales.columns if c != "contrato_codigo"]
     reporte[columnas_materiales] = reporte[columnas_materiales].fillna(0)
+    reporte["APK"] = reporte["APK"].fillna(0)
 
     columnas_finales = [
         "region", "comuna", "rut", "cod_oferta", "cod_tarea",
         "tipo_tarea", "producto", "fecha_ejecucion", "usuario",
-    ] + columnas_materiales
+    ] + columnas_materiales + ["APK"]
 
     reporte_final = reporte[columnas_finales]
 
@@ -90,7 +99,7 @@ if archivo_subido is not None:
         st.write("")
 
         agregaciones = {"instalaciones": ("cod_oferta", "count")}
-        for columna in columnas_materiales:
+        for columna in columnas_materiales + ["APK"]:
             agregaciones[columna] = (columna, "sum")
 
         resumen_dinamico = reporte_final.groupby(agrupar_por).agg(**agregaciones).reset_index()
