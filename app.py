@@ -56,10 +56,18 @@ if archivo_subido is not None:
     reporte[columnas_materiales] = reporte[columnas_materiales].fillna(0)
     reporte["APK"] = reporte["APK"].fillna(0)
 
+    columnas_decodificador = [c for c in columnas_materiales if "DECODIFICADOR" in c.upper()]
+    if columnas_decodificador:
+        reporte["decodificadores_adicionales"] = sum(
+            (reporte[columna] - 1).clip(lower=0) for columna in columnas_decodificador
+        )
+    else:
+        reporte["decodificadores_adicionales"] = 0
+
     columnas_finales = [
         "region", "comuna", "rut", "cod_oferta", "cod_tarea",
         "tipo_tarea", "producto", "fecha_ejecucion", "usuario",
-    ] + columnas_materiales + ["APK"]
+    ] + columnas_materiales + ["APK", "decodificadores_adicionales"]
 
     reporte_final = reporte[columnas_finales]
 
