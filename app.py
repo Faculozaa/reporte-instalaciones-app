@@ -102,6 +102,16 @@ if archivo_subido is not None:
             st.subheader(f"Resumen por {agrupar_por}")
             st.dataframe(resumen_dinamico, use_container_width=True)
 
+            buffer_dinamico = BytesIO()
+            resumen_dinamico.to_excel(buffer_dinamico, index=False)
+
+            st.download_button(
+                label="⬇️ Descargar tabla dinámica",
+                data=buffer_dinamico.getvalue(),
+                file_name="tabla_dinamica.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
         st.write("")
 
         with st.container(border=True):
