@@ -11,13 +11,28 @@ st.set_page_config(
 st.title("📡 Reporte de instalaciones")
 st.caption("Una fila por instalación, con el producto y los equipos instalados — sin cruzar planillas a mano.")
 
+def encontrar_hoja(archivo, columnas_requeridas):
+    excel = pd.ExcelFile(archivo)
+    for nombre_hoja in excel.sheet_names:
+        columnas = set(pd.read_excel(archivo, sheet_name=nombre_hoja, nrows=0).columns)
+        if columnas_requeridas.issubset(columnas):
+            return nombre_hoja
+    raise ValueError(
+        f"No encontré ninguna hoja con las columnas {columnas_requeridas}. "
+        f"Hojas disponibles: {excel.sheet_names}"
+    )
+
+
 with st.container(border=True):
     archivo_subido = st.file_uploader("Excel de instalaciones", type=["xlsx"])
 
 if archivo_subido is not None:
-    instalaciones = pd.read_excel(archivo_subido, sheet_name="Instalaciones realizadas")
+    hoja_instalaciones = encontrar_hoja(archivo_subido, {"cod_oferta", "producto", "region"})
+    hoja_materiales = encontrar_hoja(archivo_subido, {"contrato_codigo", "material_unificado", "material_usado_cantidad"})
+
+    instalaciones = pd.read_excel(archivo_subido, sheet_name=hoja_instalaciones)
     instalaciones = instalaciones.dropna(subset=["cod_oferta"])
-    materiales = pd.read_excel(archivo_subido, sheet_name="HOJA3")
+    materiales = pd.read_excel(archivo_subido, sheet_name=hoja_materiales)
 
     resumen_materiales = materiales.groupby(["contrato_codigo", "material_unificado"])["material_usado_cantidad"].sum()
     tabla_materiales = resumen_materiales.unstack(fill_value=0).reset_index()
