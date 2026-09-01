@@ -27,9 +27,9 @@ with st.container(border=True):
     archivo_subido = st.file_uploader("Excel de instalaciones", type=["xlsx"])
 
 if archivo_subido is not None:
-    hoja_instalaciones = encontrar_hoja(archivo_subido, {"cod_oferta", "producto", "region"})
-    hoja_materiales = encontrar_hoja(archivo_subido, {"contrato_codigo", "material_unificado", "material_usado_cantidad"})
-    hoja_apk = encontrar_hoja(archivo_subido, {"cod_oferta", "p_apk_mundogo"})
+    hoja_instalaciones = encontrar_hoja(archivo_subido, {"cod_oferta", "cod_tarea", "producto", "region"})
+    hoja_materiales = encontrar_hoja(archivo_subido, {"contrato_codigo", "codigo_tarea", "material_unificado", "material_usado_cantidad"})
+    hoja_apk = encontrar_hoja(archivo_subido, {"cod_tarea", "p_apk_mundogo"})
 
     instalaciones = pd.read_excel(archivo_subido, sheet_name=hoja_instalaciones)
     instalaciones = instalaciones.dropna(subset=["cod_oferta"])
@@ -38,31 +38,36 @@ if archivo_subido is not None:
     materiales = pd.read_excel(archivo_subido, sheet_name=hoja_materiales)
     apk = pd.read_excel(archivo_subido, sheet_name=hoja_apk)
 
-    resumen_materiales = materiales.groupby(["contrato_codigo", "material_unificado"])["material_usado_cantidad"].sum()
+    # Una oferta puede tener varias tareas (ej. un Alta y despues un Alta Adicional),
+    # asi que los materiales de cada tarea se cruzan por cod_tarea, no por cod_oferta,
+    # para no mezclar ni duplicar materiales entre tareas de una misma oferta.
+    resumen_materiales = materiales.groupby(["codigo_tarea", "material_unificado"])["material_usado_cantidad"].sum()
     tabla_materiales = resumen_materiales.unstack(fill_value=0).reset_index()
 
-    apk_reducido = apk[["cod_oferta", "p_apk_mundogo"]].drop_duplicates(subset="cod_oferta")
+    apk_reducido = apk[["cod_tarea", "p_apk_mundogo"]].drop_duplicates(subset="cod_tarea")
     apk_reducido = apk_reducido.rename(columns={"p_apk_mundogo": "APK"})
 
     reporte = instalaciones.merge(
         tabla_materiales,
-        left_on="cod_oferta",
-        right_on="contrato_codigo",
+        left_on="cod_tarea",
+        right_on="codigo_tarea",
         how="left",
     )
-    reporte = reporte.merge(apk_reducido, on="cod_oferta", how="left")
+    reporte = reporte.merge(apk_reducido, on="cod_tarea", how="left")
 
-    columnas_materiales = [c for c in tabla_materiales.columns if c != "contrato_codigo"]
+    columnas_materiales = [c for c in tabla_materiales.columns if c != "codigo_tarea"]
     reporte[columnas_materiales] = reporte[columnas_materiales].fillna(0)
     reporte["APK"] = reporte["APK"].fillna(0)
 
-    columnas_decodificador = [c for c in columnas_materiales if "DECODIFICADOR" in c.upper()]
-    if columnas_decodificador:
-        reporte["decodificadores_adicionales"] = sum(
-            (reporte[columna] - 1).clip(lower=0) for columna in columnas_decodificador
-        )
-    else:
-        reporte["decodificadores_adicionales"] = 0
+    # Los decodificadores adicionales, en cambio, se miran por ORFERTA completa:
+    # si el mismo cliente recibe un segundo decodificador en una tarea distinta
+    # (ej. una visita posterior), tambien cuenta como adicional.
+    materiales_deco = materiales[materiales["material_unificado"].str.contains("DECODIFICADOR", case=False, na=False)]
+    decos_por_oferta = materiales_deco.groupby("contrato_codigo")["material_usado_cantidad"].sum()
+    adicionales_por_oferta = (decos_por_oferta - 1).clip(lower=0).rename("decodificadores_adicionales")
+
+    reporte = reporte.merge(adicionales_por_oferta, left_on="cod_oferta", right_index=True, how="left")
+    reporte["decodificadores_adicionales"] = reporte["decodificadores_adicionales"].fillna(0)
 
     columnas_finales = [
         "region", "comuna", "rut", "cod_oferta", "cod_tarea",
