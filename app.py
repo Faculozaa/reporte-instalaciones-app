@@ -88,7 +88,13 @@ if archivo_subido is not None:
     columna1, columna2, columna3 = st.columns(3)
     columna1.metric("Instalaciones procesadas", len(reporte_final))
     columna2.metric("Equipos totales instalados", int(reporte_final[columnas_materiales].sum().sum()))
-    columna3.metric("Tipos de producto distintos", reporte_final["producto"].nunique())
+
+    campos_extra = ["DECODIFICADOR MUNDO GO", "APK", "decodificadores_adicionales"]
+    tipos_presentes = sum(
+        1 for campo in campos_extra
+        if campo in reporte_final.columns and (reporte_final[campo] > 0).any()
+    )
+    columna3.metric("Tipos de producto distintos", tipos_presentes)
 
     tab_reporte, tab_dinamica = st.tabs(["📋 Reporte", "📊 Tabla dinámica"])
 
