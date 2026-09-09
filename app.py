@@ -85,16 +85,21 @@ if archivo_subido is not None:
 
     st.success(f"Reporte generado a partir de {len(reporte_final)} instalaciones.")
 
-    columna1, columna2, columna3 = st.columns(3)
-    columna1.metric("Instalaciones procesadas", len(reporte_final))
-    columna2.metric("Equipos totales instalados", int(reporte_final[columnas_materiales].sum().sum()))
-
     campos_extra = ["DECODIFICADOR MUNDO GO", "APK", "decodificadores_adicionales"]
+
+    columna1, columna2, columna3, columna4, columna5 = st.columns(5)
+    columna1.metric("Instalaciones procesadas", len(reporte_final))
+
+    columnas_metricas = [columna2, columna3, columna4]
+    for columna_metrica, campo in zip(columnas_metricas, campos_extra):
+        total_campo = int(reporte_final[campo].sum()) if campo in reporte_final.columns else 0
+        columna_metrica.metric(campo, total_campo)
+
     tipos_presentes = sum(
         1 for campo in campos_extra
         if campo in reporte_final.columns and (reporte_final[campo] > 0).any()
     )
-    columna3.metric("Tipos de producto distintos", tipos_presentes)
+    columna5.metric("Tipos de producto distintos", tipos_presentes)
 
     tab_reporte, tab_dinamica = st.tabs(["📋 Reporte", "📊 Tabla dinámica"])
 
