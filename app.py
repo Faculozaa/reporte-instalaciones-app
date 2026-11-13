@@ -2,6 +2,7 @@ from io import BytesIO
 
 import streamlit as st
 
+import historial
 from procesamiento import (
     cierres_por_tecnico,
     construir_reporte,
@@ -18,6 +19,13 @@ st.set_page_config(
 
 MIME_EXCEL = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 ACENTO = "#00A9B7"
+TIPOS = {"actividad": "Actividad", "export": "Instalaciones"}
+
+try:
+    base = historial.conectar()
+except Exception:
+    base = None
+    st.warning("No pude conectarme a la base de datos: el historial no está disponible por ahora.")
 
 
 def a_excel(tabla):
@@ -34,6 +42,12 @@ def miles(numero):
 def guardar_subida(clave):
     archivo = st.session_state[f"subida_{clave}"]
     st.session_state[clave] = {"nombre": archivo.name, "datos": archivo.getvalue()} if archivo else None
+    if archivo and base is not None:
+        try:
+            nuevo = historial.guardar(base, archivo.name, clave, archivo.getvalue())
+            st.toast("Guardado en el historial." if nuevo else "Ese archivo ya estaba en el historial.")
+        except Exception:
+            st.toast("No pude guardarlo en el historial; el reporte funciona igual.")
 
 
 def cuadro_de_carga(columna, clave, etiqueta):
@@ -281,9 +295,43 @@ def pagina_tecnicos():
         )
 
 
+def pagina_historial():
+    if base is None:
+        st.info("El historial no está configurado: falta la base de datos en la configuración privada de la app.")
+        return
+
+    guardados = historial.listar(base)
+    if guardados.empty:
+        st.info("Todavía no hay archivos guardados. Se guardan solos al subirlos en Reportes.")
+        return
+
+    guardados["tipo"] = guardados["tipo"].map(TIPOS)
+    guardados["subido_en"] = guardados["subido_en"].dt.strftime("%d-%m-%Y %H:%M")
+
+    with st.container(border=True):
+        st.subheader(f"Archivos guardados ({len(guardados)})")
+        st.dataframe(
+            guardados.drop(columns="id").rename(columns={"nombre": "Archivo", "tipo": "Tipo", "subido_en": "Subido el"}),
+            hide_index=True,
+            width="stretch",
+        )
+
+    with st.container(border=True):
+        etiquetas = {
+            fila.id: f"{fila.nombre} · {fila.tipo} · {fila.subido_en}" for fila in guardados.itertuples()
+        }
+        elegido = st.selectbox("Volver a usar un archivo", list(etiquetas), format_func=etiquetas.get)
+        if st.button("Usar este archivo", type="primary"):
+            nombre, tipo, datos = historial.leer(base, elegido)
+            st.session_state[tipo] = {"nombre": nombre, "datos": datos}
+            st.switch_page(reportes)
+
+
+reportes = st.Page(pagina_reportes, title="Reportes", icon=":material/table_chart:", default=True)
 pagina = st.navigation([
-    st.Page(pagina_reportes, title="Reportes", icon=":material/table_chart:", default=True),
+    reportes,
     st.Page(pagina_tecnicos, title="Técnicos", icon=":material/group:"),
+    st.Page(pagina_historial, title="Historial", icon=":material/history:"),
 ])
 st.title("Operaciones Telconet")
 pagina.run()
