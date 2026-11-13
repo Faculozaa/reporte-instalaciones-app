@@ -163,12 +163,15 @@ def pagina_reportes():
         st.success(f"Reporte generado: {len(reporte)} órdenes (OF) a partir de {len(actividad)} tareas.")
 
         if not st.session_state.get("export"):
-            st.info("Sin el archivo de instalaciones, las columnas Deco adi, Router y APK quedan vacías.")
+            st.info(
+                "Deco adi sale del motivo de la tarea (cada Alta Adicional \"Deco Mundo Go\" cuenta 1). "
+                "Router y APK quedan vacíos: no vienen en el archivo de actividad."
+            )
         elif export is not None:
             sin_dato = int(reporte["APK"].isna().sum())
             if sin_dato:
                 st.warning(
-                    f"{sin_dato} órdenes quedaron sin datos de equipos y APK porque su fecha de cierre está fuera del "
+                    f"{sin_dato} órdenes quedaron sin Router ni APK (su Deco adi sale del motivo) porque su fecha de cierre está fuera del "
                     f"período que cubre el archivo de instalaciones ({export['desde'].date()} al {export['hasta'].date()})."
                 )
 

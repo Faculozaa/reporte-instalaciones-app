@@ -91,6 +91,11 @@ def construir_reporte(actividad, export=None):
         tareas["deco_adi"] = np.where(cubierta, np.clip(deco_adi, 0, None), np.nan)
         tareas["router"] = np.where(cubierta, np.clip(router_neto, 0, None), np.nan)
 
+    # shortcut: sin archivo de equipos, el deco adicional sale del motivo (1 por Alta Adicional "Deco Mundo Go");
+    # no ve cantidades mayores a 1. Pasar a cantidades reales cuando haya archivo de equipos del mismo período.
+    deco_por_motivo = tareas["es_adicional"] & (tareas["Motivo de tarea"].astype(str).str.strip().str.lower() == "deco mundo go")
+    tareas["deco_adi"] = tareas["deco_adi"].fillna(deco_por_motivo.astype(float))
+
     filas = []
     for oferta, grupo in tareas.groupby("Código Oferta", sort=False):
         grupo = grupo.sort_values(["es_adicional", "Fecha Cierre"])
