@@ -30,12 +30,18 @@ def miles(numero):
     return f"{numero:,}".replace(",", ".")
 
 
-# Los archivos se cargan en la barra lateral para que sirvan en todas las páginas.
-with st.sidebar:
-    archivo_actividad = st.file_uploader("Archivo de actividad", type=["xlsx"], key="actividad")
-    archivo_export = st.file_uploader(
-        "Archivo de instalaciones (equipos y APK) — opcional", type=["xlsx"], key="export"
-    )
+st.title("Operaciones Telconet")
+# Pestañas y no menú lateral: al cambiar de página Streamlit borra los archivos subidos; con pestañas se mantienen.
+pestana_reportes, pestana_tecnicos = st.tabs(["Reportes", "Técnicos"])
+
+with pestana_reportes:
+    columna_actividad, columna_export = st.columns(2)
+    with columna_actividad.container(border=True):
+        archivo_actividad = st.file_uploader("Archivo de actividad", type=["xlsx"], key="actividad")
+    with columna_export.container(border=True):
+        archivo_export = st.file_uploader(
+            "Archivo de instalaciones (equipos y APK) — opcional", type=["xlsx"], key="export"
+        )
 
 actividad = tecnicos = export = None
 if archivo_actividad is not None:
@@ -43,7 +49,7 @@ if archivo_actividad is not None:
     try:
         actividad = leer_actividad(BytesIO(contenido))
     except Exception:
-        st.sidebar.error(
+        pestana_reportes.error(
             "No pude leer el archivo de actividad. Revisá que tenga el mismo formato de siempre "
             "(con la hoja de actividad del mes) y volvé a subirlo."
         )
@@ -56,14 +62,14 @@ if archivo_export is not None:
     try:
         export = leer_export_instalaciones(BytesIO(archivo_export.getvalue()))
     except Exception:
-        st.sidebar.warning(
+        pestana_reportes.warning(
             "No pude leer el archivo de instalaciones. Revisá que sea el de equipos y APK "
             "(con las hojas de materiales y APK). Mientras tanto, Deco adi, Router y APK quedan vacíos."
         )
 
 
 def pedir_actividad():
-    st.info("Subí el archivo de actividad en la barra lateral para empezar.")
+    st.info("Subí el archivo de actividad para empezar.")
 
 
 def tarjeta(columna, titulo, valor, detalle):
@@ -72,14 +78,7 @@ def tarjeta(columna, titulo, valor, detalle):
         st.caption(detalle)
 
 
-def pagina_inicio():
-    if actividad is None:
-        pedir_actividad()
-        return
-    if actividad.empty:
-        st.warning("El archivo de actividad no tiene altas, altas adicionales, traslados ni cambios de plan.")
-        return
-
+def mostrar_resumen():
     tipos = actividad["Tipo de tarea"].value_counts()
     total = len(actividad)
     dias = actividad["Fecha Cierre"].dt.normalize().nunique()
@@ -135,42 +134,48 @@ def pagina_inicio():
             st.dataframe(cierres_por_tecnico(actividad, tecnicos).head(5), hide_index=True, width="stretch")
 
 
-def pagina_reportes():
+def seccion_reportes():
     if actividad is None:
         pedir_actividad()
         return
+    if actividad.empty:
+        st.warning("El archivo de actividad no tiene altas, altas adicionales, traslados ni cambios de plan.")
+        return
 
     reporte = construir_reporte(actividad, export)
-
-    st.success(f"Reporte generado: {len(reporte)} órdenes (OF) a partir de {len(actividad)} tareas.")
-
-    if archivo_export is None:
-        st.info("Sin el archivo de instalaciones, las columnas Deco adi, Router y APK quedan vacías.")
-    elif export is not None:
-        sin_dato = int(reporte["APK"].isna().sum())
-        if sin_dato:
-            st.warning(
-                f"{sin_dato} órdenes quedaron sin datos de equipos y APK porque su fecha de cierre está fuera del "
-                f"período que cubre el archivo de instalaciones ({export['desde'].date()} al {export['hasta'].date()})."
-            )
 
     def total(columna):
         return int(reporte[columna].sum()) if reporte[columna].notna().any() else "—"
 
     columnas_extra = ["Deco adi", "Router", "APK"]
-    tipos_presentes = sum(1 for columna in columnas_extra if reporte[columna].fillna(0).gt(0).any())
-    hay_datos_extra = any(reporte[columna].notna().any() for columna in columnas_extra)
+    tab_resumen, tab_reporte, tab_dinamica = st.tabs(["Resumen", "Detalle por orden", "Tabla dinámica"])
 
-    metrica1, metrica2, metrica3, metrica4, metrica5 = st.columns(5)
-    metrica1.metric("Órdenes (OF) procesadas", miles(len(reporte)), border=True)
-    metrica2.metric("Deco adi", total("Deco adi"), border=True)
-    metrica3.metric("Router", total("Router"), border=True)
-    metrica4.metric("APK", total("APK"), border=True)
-    metrica5.metric("Tipos de producto distintos", tipos_presentes if hay_datos_extra else "—", border=True)
-
-    tab_reporte, tab_dinamica = st.tabs(["Reporte", "Tabla dinámica"])
+    with tab_resumen:
+        mostrar_resumen()
 
     with tab_reporte:
+        st.success(f"Reporte generado: {len(reporte)} órdenes (OF) a partir de {len(actividad)} tareas.")
+
+        if archivo_export is None:
+            st.info("Sin el archivo de instalaciones, las columnas Deco adi, Router y APK quedan vacías.")
+        elif export is not None:
+            sin_dato = int(reporte["APK"].isna().sum())
+            if sin_dato:
+                st.warning(
+                    f"{sin_dato} órdenes quedaron sin datos de equipos y APK porque su fecha de cierre está fuera del "
+                    f"período que cubre el archivo de instalaciones ({export['desde'].date()} al {export['hasta'].date()})."
+                )
+
+        tipos_presentes = sum(1 for columna in columnas_extra if reporte[columna].fillna(0).gt(0).any())
+        hay_datos_extra = any(reporte[columna].notna().any() for columna in columnas_extra)
+
+        metrica1, metrica2, metrica3, metrica4, metrica5 = st.columns(5)
+        metrica1.metric("Órdenes (OF) procesadas", miles(len(reporte)), border=True)
+        metrica2.metric("Deco adi", total("Deco adi"), border=True)
+        metrica3.metric("Router", total("Router"), border=True)
+        metrica4.metric("APK", total("APK"), border=True)
+        metrica5.metric("Tipos de producto distintos", tipos_presentes if hay_datos_extra else "—", border=True)
+
         with st.container(border=True):
             st.subheader("Detalle por orden")
             st.dataframe(reporte, width="stretch")
@@ -228,7 +233,7 @@ def pagina_reportes():
 
 def pagina_tecnicos():
     if tecnicos is None:
-        st.info("Subí el archivo de actividad en la barra lateral: trae el listado de técnicos.")
+        st.info("Subí el archivo de actividad en la pestaña Reportes: trae el listado de técnicos.")
         return
 
     sin_inicio = tecnicos["Estado inicio"].astype(str).str.lower().str.startswith("sin")
@@ -267,10 +272,8 @@ def pagina_tecnicos():
         )
 
 
-pagina = st.navigation([
-    st.Page(pagina_inicio, title="Inicio", icon=":material/home:", default=True),
-    st.Page(pagina_reportes, title="Reportes", icon=":material/table_chart:"),
-    st.Page(pagina_tecnicos, title="Técnicos", icon=":material/group:"),
-])
-st.title("Operaciones Telconet")
-pagina.run()
+with pestana_reportes:
+    seccion_reportes()
+
+with pestana_tecnicos:
+    pagina_tecnicos()
