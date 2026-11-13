@@ -1,9 +1,9 @@
 from io import BytesIO
 
-import pandas as pd
 import streamlit as st
 
 from procesamiento import (
+    cierres_por_tecnico,
     construir_reporte,
     leer_actividad,
     leer_export_instalaciones,
@@ -11,12 +11,13 @@ from procesamiento import (
 )
 
 st.set_page_config(
-    page_title="Reporte de Instalaciones",
+    page_title="Operaciones Telconet",
     page_icon="📡",
     layout="wide",
 )
 
-st.title("📡 Reporte de instalaciones")
+MIME_EXCEL = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+ACENTO = "#00A9B7"
 
 
 def a_excel(tabla):
@@ -25,41 +26,119 @@ def a_excel(tabla):
     return buffer.getvalue()
 
 
-def seccion_reportes():
-    st.caption("Actividad del mes por oferta, con equipos adicionales y APK — sin cruzar planillas a mano.")
+def miles(numero):
+    return f"{numero:,}".replace(",", ".")
 
-    columna_actividad, columna_export = st.columns(2)
-    with columna_actividad:
-        with st.container(border=True):
-            archivo_actividad = st.file_uploader("Archivo de actividad", type=["xlsx"], key="actividad")
-    with columna_export:
-        with st.container(border=True):
-            archivo_export = st.file_uploader(
-                "Archivo de instalaciones (equipos y APK) — opcional", type=["xlsx"], key="export"
-            )
 
-    if archivo_actividad is None:
-        st.info("Subí el archivo de actividad para generar el reporte.")
-        return
+# Los archivos se cargan en la barra lateral para que sirvan en todas las páginas.
+with st.sidebar:
+    archivo_actividad = st.file_uploader("Archivo de actividad", type=["xlsx"], key="actividad")
+    archivo_export = st.file_uploader(
+        "Archivo de instalaciones (equipos y APK) — opcional", type=["xlsx"], key="export"
+    )
 
+actividad = tecnicos = export = None
+if archivo_actividad is not None:
+    contenido = archivo_actividad.getvalue()
     try:
-        actividad = leer_actividad(BytesIO(archivo_actividad.getvalue()))
+        actividad = leer_actividad(BytesIO(contenido))
     except Exception:
-        st.error(
-            "⚠️ No pude leer el archivo de actividad. Revisá que tenga el mismo formato de siempre "
+        st.sidebar.error(
+            "No pude leer el archivo de actividad. Revisá que tenga el mismo formato de siempre "
             "(con la hoja de actividad del mes) y volvé a subirlo."
         )
+    try:
+        tecnicos = leer_tecnicos(BytesIO(contenido))
+    except Exception:
+        tecnicos = None
+
+if archivo_export is not None:
+    try:
+        export = leer_export_instalaciones(BytesIO(archivo_export.getvalue()))
+    except Exception:
+        st.sidebar.warning(
+            "No pude leer el archivo de instalaciones. Revisá que sea el de equipos y APK "
+            "(con las hojas de materiales y APK). Mientras tanto, Deco adi, Router y APK quedan vacíos."
+        )
+
+
+def pedir_actividad():
+    st.info("Subí el archivo de actividad en la barra lateral para empezar.")
+
+
+def tarjeta(columna, titulo, valor, detalle):
+    with columna.container(border=True):
+        st.metric(titulo, valor)
+        st.caption(detalle)
+
+
+def pagina_inicio():
+    if actividad is None:
+        pedir_actividad()
+        return
+    if actividad.empty:
+        st.warning("El archivo de actividad no tiene altas, altas adicionales, traslados ni cambios de plan.")
         return
 
-    export = None
-    if archivo_export is not None:
-        try:
-            export = leer_export_instalaciones(BytesIO(archivo_export.getvalue()))
-        except Exception:
-            st.warning(
-                "⚠️ No pude leer el archivo de instalaciones (equipos y APK). Revisá que tenga el mismo formato "
-                "de siempre. Mientras tanto el reporte se muestra sin Deco adi, Router y APK."
-            )
+    tipos = actividad["Tipo de tarea"].value_counts()
+    total = len(actividad)
+    dias = actividad["Fecha Cierre"].dt.normalize().nunique()
+    altas = int(tipos.get("Op - Alta", 0))
+    adicionales = int(tipos.get("Op - Alta Adicional", 0))
+    traslados = int(tipos.get("Op - Traslado de domicilio", 0))
+    cambios = int(tipos.get("Op - Cambio plan", 0))
+    motivos_adicionales = actividad.loc[
+        actividad["Tipo de tarea"] == "Op - Alta Adicional", "Motivo de tarea"
+    ].value_counts()
+
+    columnas = st.columns(5)
+    tarjeta(columnas[0], "Tareas cerradas", miles(total), f"en {dias} días · {round(total / dias)} por día")
+    tarjeta(columnas[1], "Altas", miles(altas), f"{round(altas / total * 100)} % del total")
+    tarjeta(
+        columnas[2],
+        "Altas adicionales",
+        miles(adicionales),
+        " · ".join(f"{cantidad} {motivo}" for motivo, cantidad in motivos_adicionales.items()) or "ninguna",
+    )
+    tarjeta(columnas[3], "Traslados", miles(traslados), f"y {cambios} cambios de plan")
+    if tecnicos is None:
+        tarjeta(columnas[4], "Técnicos activos", "—", "el archivo no trae el listado")
+    else:
+        sin_inicio = int(tecnicos["Estado inicio"].astype(str).str.lower().str.startswith("sin").sum())
+        detalle = "todos iniciaron labores" if sin_inicio == 0 else f"{sin_inicio} sin inicio de labores"
+        tarjeta(columnas[4], "Técnicos activos", miles(len(tecnicos)), detalle)
+
+    with st.container(border=True):
+        st.subheader("Tareas cerradas por día")
+        st.caption("Altas, altas adicionales, traslados y cambios de plan. No incluye SSTT.")
+        por_dia = actividad.groupby(actividad["Fecha Cierre"].dt.date).size().rename("Tareas")
+        por_dia.index.name = "Día"
+        st.bar_chart(por_dia, color=ACENTO)
+
+    izquierda, derecha = st.columns(2)
+    with izquierda.container(border=True):
+        st.subheader("Técnicos sin inicio de labores")
+        if tecnicos is None:
+            st.caption("El archivo no trae el listado de técnicos.")
+        else:
+            sin_inicio = tecnicos["Estado inicio"].astype(str).str.lower().str.startswith("sin")
+            if sin_inicio.any():
+                st.dataframe(tecnicos.loc[sin_inicio, ["Nombre Tecnico", "CT General"]], hide_index=True, width="stretch")
+            else:
+                st.caption("Todos los técnicos iniciaron labores.")
+    with derecha.container(border=True):
+        st.subheader("Técnicos con menos cierres")
+        if tecnicos is None:
+            st.caption("El archivo no trae el listado de técnicos.")
+        else:
+            st.caption("Tareas cerradas en el período del archivo.")
+            st.dataframe(cierres_por_tecnico(actividad, tecnicos).head(5), hide_index=True, width="stretch")
+
+
+def pagina_reportes():
+    if actividad is None:
+        pedir_actividad()
+        return
 
     reporte = construir_reporte(actividad, export)
 
@@ -83,13 +162,13 @@ def seccion_reportes():
     hay_datos_extra = any(reporte[columna].notna().any() for columna in columnas_extra)
 
     metrica1, metrica2, metrica3, metrica4, metrica5 = st.columns(5)
-    metrica1.metric("Órdenes (OF) procesadas", len(reporte))
-    metrica2.metric("Deco adi", total("Deco adi"))
-    metrica3.metric("Router", total("Router"))
-    metrica4.metric("APK", total("APK"))
-    metrica5.metric("Tipos de producto distintos", tipos_presentes if hay_datos_extra else "—")
+    metrica1.metric("Órdenes (OF) procesadas", miles(len(reporte)), border=True)
+    metrica2.metric("Deco adi", total("Deco adi"), border=True)
+    metrica3.metric("Router", total("Router"), border=True)
+    metrica4.metric("APK", total("APK"), border=True)
+    metrica5.metric("Tipos de producto distintos", tipos_presentes if hay_datos_extra else "—", border=True)
 
-    tab_reporte, tab_dinamica = st.tabs(["📋 Reporte", "📊 Tabla dinámica"])
+    tab_reporte, tab_dinamica = st.tabs(["Reporte", "Tabla dinámica"])
 
     with tab_reporte:
         with st.container(border=True):
@@ -97,10 +176,10 @@ def seccion_reportes():
             st.dataframe(reporte, width="stretch")
 
         st.download_button(
-            label="⬇️ Descargar reporte en Excel",
+            label="Descargar reporte en Excel",
             data=a_excel(reporte),
             file_name="reporte_instalaciones.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            mime=MIME_EXCEL,
             type="primary",
         )
 
@@ -134,45 +213,31 @@ def seccion_reportes():
             st.subheader(f"Resumen por {agrupar_por}")
             st.dataframe(resumen_dinamico, width="stretch")
             st.download_button(
-                label="⬇️ Descargar tabla dinámica",
+                label="Descargar tabla dinámica",
                 data=a_excel(resumen_dinamico),
                 file_name="tabla_dinamica.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                mime=MIME_EXCEL,
             )
 
         st.write("")
 
         with st.container(border=True):
             st.subheader(f"Órdenes por {agrupar_por}")
-            st.bar_chart(resumen_dinamico.set_index(agrupar_por)["OF"])
+            st.bar_chart(resumen_dinamico.set_index(agrupar_por)["OF"], color=ACENTO)
 
 
-def seccion_tecnicos():
-    st.caption("Listado de todos los técnicos con su centro técnico y su estado de inicio de labores.")
-
-    with st.container(border=True):
-        archivo_tecnicos = st.file_uploader("Archivo de técnicos", type=["xlsx"], key="tecnicos")
-
-    if archivo_tecnicos is None:
-        st.info("Subí el archivo de técnicos para ver el listado.")
-        return
-
-    try:
-        tecnicos = leer_tecnicos(BytesIO(archivo_tecnicos.getvalue()))
-    except Exception:
-        st.error(
-            "⚠️ No pude leer el archivo de técnicos. Revisá que tenga el mismo formato de siempre "
-            "(con la hoja del listado de técnicos) y volvé a subirlo."
-        )
+def pagina_tecnicos():
+    if tecnicos is None:
+        st.info("Subí el archivo de actividad en la barra lateral: trae el listado de técnicos.")
         return
 
     sin_inicio = tecnicos["Estado inicio"].astype(str).str.lower().str.startswith("sin")
 
     metrica1, metrica2, metrica3, metrica4 = st.columns(4)
-    metrica1.metric("Técnicos activos", len(tecnicos))
-    metrica2.metric("Con inicio de labores", int((~sin_inicio).sum()))
-    metrica3.metric("Sin inicio de labores", int(sin_inicio.sum()))
-    metrica4.metric("Centros técnicos", tecnicos["CT General"].nunique())
+    metrica1.metric("Técnicos activos", len(tecnicos), border=True)
+    metrica2.metric("Con inicio de labores", int((~sin_inicio).sum()), border=True)
+    metrica3.metric("Sin inicio de labores", int(sin_inicio.sum()), border=True)
+    metrica4.metric("Centros técnicos", tecnicos["CT General"].nunique(), border=True)
 
     with st.container(border=True):
         busqueda = st.text_input("Buscar técnico (nombre o correo)")
@@ -188,25 +253,24 @@ def seccion_tecnicos():
     if busqueda:
         texto = busqueda.lower()
         coincide = vista["Nombre Tecnico"].astype(str).str.lower().str.contains(texto, regex=False)
-        if "Correo" in vista.columns:
-            coincide = coincide | vista["Correo"].astype(str).str.lower().str.contains(texto, regex=False)
+        coincide = coincide | vista["Correo"].astype(str).str.lower().str.contains(texto, regex=False)
         vista = vista[coincide]
 
     with st.container(border=True):
         st.subheader(f"Listado de técnicos ({len(vista)})")
         st.dataframe(vista, width="stretch")
         st.download_button(
-            label="⬇️ Descargar listado de técnicos",
+            label="Descargar listado de técnicos",
             data=a_excel(vista),
             file_name="tecnicos.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            mime=MIME_EXCEL,
         )
 
 
-pestana_reportes, pestana_tecnicos = st.tabs(["📋 Reportes", "👷 Técnicos"])
-
-with pestana_reportes:
-    seccion_reportes()
-
-with pestana_tecnicos:
-    seccion_tecnicos()
+pagina = st.navigation([
+    st.Page(pagina_inicio, title="Inicio", icon=":material/home:", default=True),
+    st.Page(pagina_reportes, title="Reportes", icon=":material/table_chart:"),
+    st.Page(pagina_tecnicos, title="Técnicos", icon=":material/group:"),
+])
+st.title("Operaciones Telconet")
+pagina.run()

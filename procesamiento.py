@@ -9,8 +9,8 @@ TIPOS_VALIDOS = [
     "Op - Cambio plan",
 ]
 
-COLUMNAS_ACTIVIDAD = {"MTA", "Código Oferta", "Tipo de tarea", "Motivo de tarea", "Fecha Cierre", "Técnico Cierre", "CT Específico"}
-COLUMNAS_TECNICOS = {"Nombre Tecnico", "Tecnico ID", "Estado inicio", "CT General"}
+COLUMNAS_ACTIVIDAD = {"MTA", "Código Oferta", "Tipo de tarea", "Motivo de tarea", "Fecha Cierre", "Técnico Cierre", "Correo Técnico Cierre", "CT Específico"}
+COLUMNAS_TECNICOS = {"Nombre Tecnico", "Correo", "Tecnico ID", "Estado inicio", "CT General"}
 COLUMNAS_MATERIALES = {"codigo_tarea", "material_unificado", "material_usado_cantidad", "created_at"}
 COLUMNAS_APK = {"cod_oferta", "p_apk_mundogo"}
 
@@ -38,6 +38,14 @@ def leer_actividad(archivo):
 
 def leer_tecnicos(archivo):
     return leer_hoja(archivo, COLUMNAS_TECNICOS)
+
+
+def cierres_por_tecnico(actividad, tecnicos):
+    # Se cruza por correo porque el nombre puede venir escrito distinto en cada hoja.
+    cierres = actividad["Correo Técnico Cierre"].str.lower().value_counts()
+    lista = tecnicos[["Nombre Tecnico", "CT General"]].copy()
+    lista["Tareas"] = tecnicos["Correo"].str.lower().map(cierres).fillna(0).astype(int)
+    return lista.sort_values("Tareas", kind="stable").reset_index(drop=True)
 
 
 def leer_export_instalaciones(archivo):
