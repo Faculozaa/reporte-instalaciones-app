@@ -30,42 +30,42 @@ def miles(numero):
     return f"{numero:,}".replace(",", ".")
 
 
-st.title("Operaciones Telconet")
-# Pestañas y no menú lateral: al cambiar de página Streamlit borra los archivos subidos; con pestañas se mantienen.
-pestana_reportes, pestana_tecnicos = st.tabs(["Reportes", "Técnicos"])
+# Al cambiar de página Streamlit borra lo que tenía el cuadro de carga, así que el archivo se guarda aparte en la sesión.
+def guardar_subida(clave):
+    archivo = st.session_state[f"subida_{clave}"]
+    st.session_state[clave] = {"nombre": archivo.name, "datos": archivo.getvalue()} if archivo else None
 
-with pestana_reportes:
-    columna_actividad, columna_export = st.columns(2)
-    with columna_actividad.container(border=True):
-        archivo_actividad = st.file_uploader("Archivo de actividad", type=["xlsx"], key="actividad")
-    with columna_export.container(border=True):
-        archivo_export = st.file_uploader(
-            "Archivo de instalaciones (equipos y APK) — opcional", type=["xlsx"], key="export"
-        )
+
+def cuadro_de_carga(columna, clave, etiqueta):
+    with columna.container(border=True):
+        st.file_uploader(etiqueta, type=["xlsx"], key=f"subida_{clave}", on_change=guardar_subida, args=(clave,))
+        guardado = st.session_state.get(clave)
+        if guardado and st.session_state.get(f"subida_{clave}") is None:
+            st.caption(f"En uso: {guardado['nombre']}. Para cambiarlo, subí otro.")
+
 
 actividad = tecnicos = export = None
-if archivo_actividad is not None:
-    contenido = archivo_actividad.getvalue()
+avisos = []
+if st.session_state.get("actividad"):
+    contenido = st.session_state["actividad"]["datos"]
     try:
         actividad = leer_actividad(BytesIO(contenido))
     except Exception:
-        pestana_reportes.error(
+        avisos.append((st.error,
             "No pude leer el archivo de actividad. Revisá que tenga el mismo formato de siempre "
-            "(con la hoja de actividad del mes) y volvé a subirlo."
-        )
+            "(con la hoja de actividad del mes) y volvé a subirlo."))
     try:
         tecnicos = leer_tecnicos(BytesIO(contenido))
     except Exception:
         tecnicos = None
 
-if archivo_export is not None:
+if st.session_state.get("export"):
     try:
-        export = leer_export_instalaciones(BytesIO(archivo_export.getvalue()))
+        export = leer_export_instalaciones(BytesIO(st.session_state["export"]["datos"]))
     except Exception:
-        pestana_reportes.warning(
+        avisos.append((st.warning,
             "No pude leer el archivo de instalaciones. Revisá que sea el de equipos y APK "
-            "(con las hojas de materiales y APK). Mientras tanto, Deco adi, Router y APK quedan vacíos."
-        )
+            "(con las hojas de materiales y APK). Mientras tanto, Deco adi, Router y APK quedan vacíos."))
 
 
 def pedir_actividad():
@@ -134,7 +134,13 @@ def mostrar_resumen():
             st.dataframe(cierres_por_tecnico(actividad, tecnicos).head(5), hide_index=True, width="stretch")
 
 
-def seccion_reportes():
+def pagina_reportes():
+    columna_actividad, columna_export = st.columns(2)
+    cuadro_de_carga(columna_actividad, "actividad", "Archivo de actividad")
+    cuadro_de_carga(columna_export, "export", "Archivo de instalaciones (equipos y APK) — opcional")
+    for mostrar, mensaje in avisos:
+        mostrar(mensaje)
+
     if actividad is None:
         pedir_actividad()
         return
@@ -156,7 +162,7 @@ def seccion_reportes():
     with tab_reporte:
         st.success(f"Reporte generado: {len(reporte)} órdenes (OF) a partir de {len(actividad)} tareas.")
 
-        if archivo_export is None:
+        if not st.session_state.get("export"):
             st.info("Sin el archivo de instalaciones, las columnas Deco adi, Router y APK quedan vacías.")
         elif export is not None:
             sin_dato = int(reporte["APK"].isna().sum())
@@ -233,7 +239,7 @@ def seccion_reportes():
 
 def pagina_tecnicos():
     if tecnicos is None:
-        st.info("Subí el archivo de actividad en la pestaña Reportes: trae el listado de técnicos.")
+        st.info("Subí el archivo de actividad en Reportes: trae el listado de técnicos.")
         return
 
     sin_inicio = tecnicos["Estado inicio"].astype(str).str.lower().str.startswith("sin")
@@ -272,8 +278,9 @@ def pagina_tecnicos():
         )
 
 
-with pestana_reportes:
-    seccion_reportes()
-
-with pestana_tecnicos:
-    pagina_tecnicos()
+pagina = st.navigation([
+    st.Page(pagina_reportes, title="Reportes", icon=":material/table_chart:", default=True),
+    st.Page(pagina_tecnicos, title="Técnicos", icon=":material/group:"),
+])
+st.title("Operaciones Telconet")
+pagina.run()
