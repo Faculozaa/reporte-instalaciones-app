@@ -12,7 +12,7 @@ TIPOS_VALIDOS = [
 COLUMNAS_ACTIVIDAD = {"MTA", "Código Oferta", "Tipo de tarea", "Motivo de tarea", "Fecha Cierre", "Técnico Cierre", "Correo Técnico Cierre", "CT Específico"}
 COLUMNAS_TECNICOS = {"Nombre Tecnico", "Correo", "Tecnico ID", "Estado inicio", "CT General"}
 COLUMNAS_MATERIALES = {"codigo_tarea", "material_unificado", "material_usado_cantidad", "created_at"}
-COLUMNAS_APK = {"cod_oferta", "p_apk_mundogo"}
+COLUMNAS_APK = {"cod_oferta", "p_apk_mundogo", "fecha_fin"}
 
 
 def leer_hoja(archivo, columnas_requeridas):
@@ -48,28 +48,42 @@ def cierres_por_tecnico(actividad, tecnicos):
     return lista.sort_values("Tareas", kind="stable").reset_index(drop=True)
 
 
-def leer_export_instalaciones(archivo):
-    materiales = leer_hoja(archivo, COLUMNAS_MATERIALES)
-    nombre = materiales["material_unificado"].astype(str).str.upper()
-    cantidad = materiales["material_usado_cantidad"]
+def buscar_hoja(archivo, columnas_requeridas):
+    try:
+        return leer_hoja(archivo, columnas_requeridas)
+    except ValueError:
+        return None
 
-    # material_usado_cantidad es +1 al instalar y -1 al retirar, por eso se suma.
-    deco = cantidad[nombre.str.contains("DECODIFICADOR")].groupby(materiales["codigo_tarea"]).sum()
-    router = cantidad[nombre.str.contains("ROUTER")].groupby(materiales["codigo_tarea"]).sum()
-    por_mta = pd.concat([deco.rename("deco_neto"), router.rename("router_neto")], axis=1)
-    por_mta = por_mta.reindex(columns=["deco_neto", "router_neto"]).fillna(0)
 
-    fechas = pd.to_datetime(materiales["created_at"]).dt.normalize()
+def leer_export_instalaciones(archivos):
+    """Acepta el Excel combinado de antes o los archivos de Materiales y de APK por separado, uno o varios."""
+    materiales = [hoja for hoja in (buscar_hoja(a, COLUMNAS_MATERIALES) for a in archivos) if hoja is not None]
+    apks = [hoja for hoja in (buscar_hoja(a, COLUMNAS_APK) for a in archivos) if hoja is not None]
+    if not materiales and not apks:
+        raise ValueError("Ningún archivo tiene la hoja de materiales ni la de APK.")
 
-    apk = leer_hoja(archivo, COLUMNAS_APK)
-    ofertas_con_apk = set(apk.loc[apk["p_apk_mundogo"] > 0, "cod_oferta"].dropna())
+    export = {"materiales": None, "materiales_desde": None, "materiales_hasta": None,
+              "ofertas_con_apk": None, "apk_desde": None, "apk_hasta": None}
 
-    return {
-        "materiales": por_mta,
-        "ofertas_con_apk": ofertas_con_apk,
-        "desde": fechas.min(),
-        "hasta": fechas.max(),
-    }
+    if materiales:
+        materiales = pd.concat(materiales)
+        nombre = materiales["material_unificado"].astype(str).str.upper()
+        cantidad = materiales["material_usado_cantidad"]
+        # material_usado_cantidad es +1 al instalar y -1 al retirar, por eso se suma.
+        deco = cantidad[nombre.str.contains("DECODIFICADOR")].groupby(materiales["codigo_tarea"]).sum()
+        router = cantidad[nombre.str.contains("ROUTER")].groupby(materiales["codigo_tarea"]).sum()
+        por_mta = pd.concat([deco.rename("deco_neto"), router.rename("router_neto")], axis=1)
+        fechas = pd.to_datetime(materiales["created_at"]).dt.normalize()
+        export.update(materiales=por_mta.reindex(columns=["deco_neto", "router_neto"]).fillna(0),
+                      materiales_desde=fechas.min(), materiales_hasta=fechas.max())
+
+    if apks:
+        apk = pd.concat(apks)
+        fechas = pd.to_datetime(apk["fecha_fin"]).dt.normalize()
+        export.update(ofertas_con_apk=set(apk.loc[apk["p_apk_mundogo"] > 0, "cod_oferta"].dropna()),
+                      apk_desde=fechas.min(), apk_hasta=fechas.max())
+
+    return export
 
 
 def construir_reporte(actividad, export=None):
@@ -80,9 +94,9 @@ def construir_reporte(actividad, export=None):
     tareas["deco_adi"] = np.nan
     tareas["router"] = np.nan
 
-    if export is not None:
-        # Fuera del periodo que cubre el archivo de instalaciones no hay dato, y eso no es lo mismo que cero.
-        cubierta = ((tareas["dia"] >= export["desde"]) & (tareas["dia"] <= export["hasta"])).to_numpy()
+    if export is not None and export["materiales"] is not None:
+        # Fuera del periodo que cubre el archivo de materiales no hay dato, y eso no es lo mismo que cero.
+        cubierta = ((tareas["dia"] >= export["materiales_desde"]) & (tareas["dia"] <= export["materiales_hasta"])).to_numpy()
         materiales = export["materiales"].reindex(tareas["MTA"].to_numpy()).fillna(0)
         deco_neto = materiales["deco_neto"].to_numpy()
         router_neto = materiales["router_neto"].to_numpy()
@@ -104,7 +118,7 @@ def construir_reporte(actividad, export=None):
         referencia = base if base is not None else grupo.iloc[0]
 
         apk = np.nan
-        if export is not None and export["desde"] <= referencia["dia"] <= export["hasta"]:
+        if export is not None and export["ofertas_con_apk"] is not None and export["apk_desde"] <= referencia["dia"] <= export["apk_hasta"]:
             apk = 1 if oferta in export["ofertas_con_apk"] else 0
 
         filas.append({

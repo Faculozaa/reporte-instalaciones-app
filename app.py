@@ -1,5 +1,6 @@
 from io import BytesIO
 
+import pandas as pd
 import streamlit as st
 
 import historial
@@ -39,29 +40,48 @@ def miles(numero):
 
 
 # Al cambiar de página Streamlit borra lo que tenía el cuadro de carga, así que el archivo se guarda aparte en la sesión.
+def archivo_valido(clave, datos):
+    try:
+        if clave == "actividad":
+            leer_actividad(BytesIO(datos))
+        else:
+            leer_export_instalaciones([BytesIO(datos)])
+        return True
+    except Exception:
+        return False
+
+
 def guardar_subida(clave):
-    archivo = st.session_state[f"subida_{clave}"]
-    st.session_state[clave] = {"nombre": archivo.name, "datos": archivo.getvalue()} if archivo else None
-    if archivo and base is not None:
+    subida = st.session_state[f"subida_{clave}"]
+    archivos = [subida] if clave == "actividad" and subida else (subida or [])
+    st.session_state[clave] = [{"nombre": a.name, "datos": a.getvalue()} for a in archivos] or None
+    if base is None:
+        return
+    for archivo in archivos:
+        # Solo se guarda lo que se pudo leer, para no llenar el historial de archivos equivocados.
+        if not archivo_valido(clave, archivo.getvalue()):
+            st.toast(f"{archivo.name}: no es del tipo esperado, no lo guardé en el historial.")
+            continue
         try:
             nuevo = historial.guardar(base, archivo.name, clave, archivo.getvalue())
-            st.toast("Guardado en el historial." if nuevo else "Ese archivo ya estaba en el historial.")
+            st.toast(f"{archivo.name}: " + ("guardado en el historial." if nuevo else "ya estaba en el historial."))
         except Exception:
-            st.toast("No pude guardarlo en el historial; el reporte funciona igual.")
+            st.toast(f"{archivo.name}: no pude guardarlo en el historial; el reporte funciona igual.")
 
 
-def cuadro_de_carga(columna, clave, etiqueta):
+def cuadro_de_carga(columna, clave, etiqueta, varios=False):
     with columna.container(border=True):
-        st.file_uploader(etiqueta, type=["xlsx"], key=f"subida_{clave}", on_change=guardar_subida, args=(clave,))
-        guardado = st.session_state.get(clave)
-        if guardado and st.session_state.get(f"subida_{clave}") is None:
-            st.caption(f"En uso: {guardado['nombre']}. Para cambiarlo, subí otro.")
+        st.file_uploader(etiqueta, type=["xlsx"], accept_multiple_files=varios, key=f"subida_{clave}",
+                         on_change=guardar_subida, args=(clave,))
+        guardados = st.session_state.get(clave)
+        if guardados and not st.session_state.get(f"subida_{clave}"):
+            st.caption(f"En uso: {', '.join(a['nombre'] for a in guardados)}. Para cambiarlo, subí otro.")
 
 
 actividad = tecnicos = export = None
 avisos = []
 if st.session_state.get("actividad"):
-    contenido = st.session_state["actividad"]["datos"]
+    contenido = st.session_state["actividad"][0]["datos"]
     try:
         actividad = leer_actividad(BytesIO(contenido))
     except Exception:
@@ -75,11 +95,11 @@ if st.session_state.get("actividad"):
 
 if st.session_state.get("export"):
     try:
-        export = leer_export_instalaciones(BytesIO(st.session_state["export"]["datos"]))
+        export = leer_export_instalaciones([BytesIO(a["datos"]) for a in st.session_state["export"]])
     except Exception:
         avisos.append((st.warning,
-            "No pude leer el archivo de instalaciones. Revisá que sea el de equipos y APK "
-            "(con las hojas de materiales y APK). Mientras tanto, Deco adi, Router y APK quedan vacíos."))
+            "No pude leer los archivos de equipos y APK. Revisá que sean el de Materiales Utilizados y/o el de APK "
+            "(o el Excel que trae los dos). Mientras tanto, Router y APK quedan vacíos y Deco adi sale del motivo."))
 
 
 def pedir_actividad():
@@ -151,7 +171,7 @@ def mostrar_resumen():
 def pagina_reportes():
     columna_actividad, columna_export = st.columns(2)
     cuadro_de_carga(columna_actividad, "actividad", "Archivo de actividad")
-    cuadro_de_carga(columna_export, "export", "Archivo de instalaciones (equipos y APK) — opcional")
+    cuadro_de_carga(columna_export, "export", "Archivos de Materiales y APK — opcional, podés subir varios", varios=True)
     for mostrar, mensaje in avisos:
         mostrar(mensaje)
 
@@ -182,12 +202,18 @@ def pagina_reportes():
                 "Router y APK quedan vacíos: no vienen en el archivo de actividad."
             )
         elif export is not None:
-            sin_dato = int(reporte["APK"].isna().sum())
-            if sin_dato:
-                st.warning(
-                    f"{sin_dato} órdenes quedaron sin Router ni APK (su Deco adi sale del motivo) porque su fecha de cierre está fuera del "
-                    f"período que cubre el archivo de instalaciones ({export['desde'].date()} al {export['hasta'].date()})."
-                )
+            if export["materiales"] is None:
+                st.info("No subiste el archivo de materiales: Router queda vacío y Deco adi sale del motivo.")
+            if export["ofertas_con_apk"] is None:
+                st.info("No subiste el archivo de APK: la columna APK queda vacía.")
+            for parte, columna in (("materiales", "Router"), ("APK", "APK")):
+                desde, hasta = export[f"{parte.lower()}_desde"], export[f"{parte.lower()}_hasta"]
+                fuera = int(reporte[columna].isna().sum())
+                if pd.notna(desde) and fuera:
+                    st.warning(
+                        f"{fuera} órdenes quedaron sin {columna} porque su fecha de cierre está fuera del período "
+                        f"del archivo de {parte} ({desde:%d-%m-%Y} al {hasta:%d-%m-%Y})."
+                    )
 
         tipos_presentes = sum(1 for columna in columnas_extra if reporte[columna].fillna(0).gt(0).any())
         hay_datos_extra = any(reporte[columna].notna().any() for columna in columnas_extra)
@@ -318,12 +344,20 @@ def pagina_historial():
 
     with st.container(border=True):
         etiquetas = {
-            fila.id: f"{fila.nombre} · {fila.tipo} · {fila.subido_en}" for fila in guardados.itertuples()
+            str(fila.id): f"{fila.nombre} · {fila.tipo} · {fila.subido_en}" for fila in guardados.itertuples()
         }
-        elegido = st.selectbox("Volver a usar un archivo", list(etiquetas), format_func=etiquetas.get)
-        if st.button("Usar este archivo", type="primary"):
-            nombre, tipo, datos = historial.leer(base, elegido)
-            st.session_state[tipo] = {"nombre": nombre, "datos": datos}
+        elegidos = st.multiselect(
+            "Volver a usar archivos (uno de actividad y, si querés, los de materiales y APK)",
+            list(etiquetas), format_func=etiquetas.get,
+        )
+        if st.button("Usar estos archivos", type="primary", disabled=not elegidos):
+            cargados = {}
+            for id_archivo in elegidos:
+                nombre, tipo, datos = historial.leer(base, int(id_archivo))
+                cargados.setdefault(tipo, []).append({"nombre": nombre, "datos": datos})
+            if "actividad" in cargados:
+                cargados["actividad"] = cargados["actividad"][:1]
+            st.session_state.update(cargados)
             st.switch_page(reportes)
 
 
