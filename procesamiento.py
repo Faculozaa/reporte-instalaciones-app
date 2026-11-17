@@ -63,7 +63,7 @@ def leer_export_instalaciones(archivos):
         raise ValueError("Ningún archivo tiene la hoja de materiales ni la de APK.")
 
     export = {"materiales": None, "materiales_desde": None, "materiales_hasta": None,
-              "ofertas_con_apk": None, "apk_desde": None, "apk_hasta": None}
+              "apk_por_oferta": None, "apk_desde": None, "apk_hasta": None}
 
     if materiales:
         materiales = pd.concat(materiales)
@@ -78,9 +78,11 @@ def leer_export_instalaciones(archivos):
                       materiales_desde=fechas.min(), materiales_hasta=fechas.max())
 
     if apks:
-        apk = pd.concat(apks)
-        fechas = pd.to_datetime(apk["fecha_fin"]).dt.normalize()
-        export.update(ofertas_con_apk=set(apk.loc[apk["p_apk_mundogo"] > 0, "cod_oferta"].dropna()),
+        # p_apk_mundogo ya es la cantidad de APK de la oferta. En el formato viejo la oferta se repetía con el mismo
+        # número (una fila por tarea), así que dentro de cada archivo se toma una vez; entre archivos de distintos días se suma.
+        por_archivo = [hoja.groupby("cod_oferta")["p_apk_mundogo"].max() for hoja in apks]
+        fechas = pd.to_datetime(pd.concat(apks)["fecha_fin"]).dt.normalize()
+        export.update(apk_por_oferta=pd.concat(por_archivo).groupby(level=0).sum(),
                       apk_desde=fechas.min(), apk_hasta=fechas.max())
 
     return export
@@ -118,8 +120,8 @@ def construir_reporte(actividad, export=None):
         referencia = base if base is not None else grupo.iloc[0]
 
         apk = np.nan
-        if export is not None and export["ofertas_con_apk"] is not None and export["apk_desde"] <= referencia["dia"] <= export["apk_hasta"]:
-            apk = 1 if oferta in export["ofertas_con_apk"] else 0
+        if export is not None and export["apk_por_oferta"] is not None and export["apk_desde"] <= referencia["dia"] <= export["apk_hasta"]:
+            apk = int(export["apk_por_oferta"].get(oferta, 0))
 
         filas.append({
             "Fecha cierre": referencia["Fecha Cierre"].date(),

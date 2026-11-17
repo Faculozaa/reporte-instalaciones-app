@@ -204,7 +204,7 @@ def pagina_reportes():
         elif export is not None:
             if export["materiales"] is None:
                 st.info("No subiste el archivo de materiales: Router queda vacío y Deco adi sale del motivo.")
-            if export["ofertas_con_apk"] is None:
+            if export["apk_por_oferta"] is None:
                 st.info("No subiste el archivo de APK: la columna APK queda vacía.")
             for parte, columna in (("materiales", "Router"), ("APK", "APK")):
                 desde, hasta = export[f"{parte.lower()}_desde"], export[f"{parte.lower()}_hasta"]
