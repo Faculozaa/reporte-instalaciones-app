@@ -88,6 +88,15 @@ def leer_export_instalaciones(archivos):
     return export
 
 
+def sin_cruce(actividad, export):
+    """Lo que viene en los archivos de APK y de materiales pero no aparece en la actividad (no suma en el reporte)."""
+    apk, materiales = export["apk_por_oferta"], export["materiales"]
+    return {
+        "apk": None if apk is None else apk[~apk.index.isin(actividad["Código Oferta"])],
+        "materiales": None if materiales is None else materiales[~materiales.index.isin(actividad["MTA"])],
+    }
+
+
 def construir_reporte(actividad, export=None):
     """Una fila por oferta (OF): la MTA base y, si existe, la MTA adicional."""
     tareas = actividad.copy()

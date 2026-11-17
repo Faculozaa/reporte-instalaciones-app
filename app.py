@@ -10,6 +10,7 @@ from procesamiento import (
     leer_actividad,
     leer_export_instalaciones,
     leer_tecnicos,
+    sin_cruce,
 )
 
 st.set_page_config(
@@ -168,6 +169,35 @@ def mostrar_resumen():
             st.dataframe(cierres_por_tecnico(actividad, tecnicos).head(5), hide_index=True, width="stretch")
 
 
+def mostrar_cuadre(export):
+    faltan = sin_cruce(actividad, export)
+    apk_total = export["apk_por_oferta"]
+    if apk_total is not None:
+        falta = faltan["apk"]
+        if falta.empty:
+            st.success(f"Cuadre APK: las {len(apk_total)} ofertas del archivo cruzan con la actividad ({miles(int(apk_total.sum()))} APK de {miles(int(apk_total.sum()))}).")
+        else:
+            st.warning(
+                f"Cuadre APK: {len(falta)} de {len(apk_total)} ofertas del archivo de APK no aparecen en la actividad, "
+                f"así que el reporte suma {miles(int(apk_total.sum() - falta.sum()))} APK de {miles(int(apk_total.sum()))}."
+            )
+            with st.expander("Ver ofertas de APK que no cruzan"):
+                st.dataframe(falta.rename("APK").rename_axis("Cod OF").reset_index(), hide_index=True)
+    materiales = export["materiales"]
+    if materiales is not None:
+        falta = faltan["materiales"]
+        if falta.empty:
+            st.success(f"Cuadre materiales: las {len(materiales)} tareas con decos o routers cruzan con la actividad.")
+        else:
+            st.warning(
+                f"Cuadre materiales: {len(falta)} de {len(materiales)} tareas con decos o routers no aparecen en la actividad, "
+                f"así que sus equipos ({int(falta['deco_neto'].clip(lower=0).sum())} decos y "
+                f"{int(falta['router_neto'].clip(lower=0).sum())} routers) no suman en el reporte."
+            )
+            with st.expander("Ver tareas de materiales que no cruzan"):
+                st.dataframe(falta.astype(int).rename_axis("MTA").reset_index(), hide_index=True)
+
+
 def pagina_reportes():
     columna_actividad, columna_export = st.columns(2)
     cuadro_de_carga(columna_actividad, "actividad", "Archivo de actividad")
@@ -214,6 +244,7 @@ def pagina_reportes():
                         f"{fuera} órdenes quedaron sin {columna} porque su fecha de cierre está fuera del período "
                         f"del archivo de {parte} ({desde:%d-%m-%Y} al {hasta:%d-%m-%Y})."
                     )
+            mostrar_cuadre(export)
 
         tipos_presentes = sum(1 for columna in columnas_extra if reporte[columna].fillna(0).gt(0).any())
         hay_datos_extra = any(reporte[columna].notna().any() for columna in columnas_extra)
