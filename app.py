@@ -1,11 +1,11 @@
 import re
 from io import BytesIO
 
-import altair as alt
 import pandas as pd
 import streamlit as st
 
 import historial
+from componentes import MAXIMO_BARRAS, grafico_por_dia, grafico_ranking, miles, tabla, tarjetas
 from procesamiento import (
     cierres_por_tecnico,
     construir_reporte,
@@ -22,52 +22,6 @@ st.set_page_config(
 )
 
 MIME_EXCEL = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-ACENTO = "#00A9B7"
-MAXIMO_BARRAS = 15
-
-
-def modo_oscuro():
-    return st.context.theme.type == "dark"
-
-
-def color_barras():
-    # El turquesa de la marca no llega al contraste mínimo (3:1) sobre fondo blanco: en modo claro va un paso más oscuro.
-    return ACENTO if modo_oscuro() else "#0096A3"
-
-
-def color_texto():
-    # Las etiquetas dentro del gráfico no siguen el tema solas; mismos colores de texto que .streamlit/config.toml.
-    return "#E6E8EB" if modo_oscuro() else "#1F2328"
-
-
-def grafico_por_dia(serie, medida):
-    """Columnas por día, con el promedio como referencia y el día más alto marcado."""
-    datos = serie.rename_axis("Día").reset_index(name=medida)
-    promedio = datos[medida].mean()
-    x = alt.X("Día:T", title=None, axis=alt.Axis(format="%d-%m", labelAngle=0, grid=False))
-    y = alt.Y(f"{medida}:Q", title=None, axis=alt.Axis(tickCount=5))
-    columnas = alt.Chart(datos).mark_bar(
-        color=color_barras(), size=16, cornerRadiusTopLeft=4, cornerRadiusTopRight=4,
-    ).encode(x=x, y=y, tooltip=[alt.Tooltip("Día:T", format="%d-%m-%Y"), alt.Tooltip(f"{medida}:Q")])
-    pico = alt.Chart(datos.nlargest(1, medida)).mark_text(dy=-8, fontWeight="bold", color=color_texto()).encode(
-        x=x, y=y, text=f"{medida}:Q"
-    )
-    linea = alt.Chart(pd.DataFrame({"valor": [promedio]})).mark_rule(color="gray", opacity=0.6).encode(
-        y="valor:Q", tooltip=[alt.Tooltip("valor:Q", title="Promedio", format=".0f")]
-    )
-    return (columnas + linea + pico).properties(height=300)
-
-
-def grafico_ranking(tabla, categoria, medida="OF"):
-    """Barras horizontales ordenadas de mayor a menor, con el valor en la punta."""
-    datos = tabla.nlargest(MAXIMO_BARRAS, medida)
-    y = alt.Y(f"{categoria}:N", sort="-x", title=None, axis=alt.Axis(labelLimit=260))
-    x = alt.X(f"{medida}:Q", title=None, axis=alt.Axis(tickCount=5))
-    barras = alt.Chart(datos).mark_bar(
-        color=color_barras(), size=16, cornerRadiusTopRight=4, cornerRadiusBottomRight=4,
-    ).encode(x=x, y=y, tooltip=[alt.Tooltip(f"{categoria}:N"), alt.Tooltip(f"{medida}:Q")])
-    valores = barras.mark_text(align="left", dx=4, color=color_texto()).encode(text=f"{medida}:Q")
-    return (barras + valores).properties(height=28 * len(datos) + 20)
 TIPOS = {"actividad": "Actividad", "export": "Instalaciones"}
 
 
@@ -118,14 +72,10 @@ else:
                 st.code(detalle[:600])
 
 
-def a_excel(tabla):
+def a_excel(datos):
     buffer = BytesIO()
-    tabla.to_excel(buffer, index=False)
+    datos.to_excel(buffer, index=False)
     return buffer.getvalue()
-
-
-def miles(numero):
-    return f"{numero:,}".replace(",", ".")
 
 
 # Al cambiar de página Streamlit borra lo que tenía el cuadro de carga, así que el archivo se guarda aparte en la sesión.
@@ -217,68 +167,65 @@ def pedir_actividad():
         st.info("Todavía no hay archivos cargados. Cuando el administrador suba uno, lo vas a ver acá.")
 
 
-def tarjeta(columna, titulo, valor, detalle):
-    with columna.container(border=True):
-        st.metric(titulo, valor)
-        st.caption(detalle)
+def sin_inicio_de_labores():
+    return tecnicos["Estado inicio"].astype(str).str.lower().str.startswith("sin")
 
 
-def mostrar_resumen():
+def indicadores_operativos():
+    """Fila de números que se ve siempre arriba de las pestañas de Reportes."""
     tipos = actividad["Tipo de tarea"].value_counts()
     total = len(actividad)
     dias = actividad["Fecha Cierre"].dt.normalize().nunique()
     altas = int(tipos.get("Op - Alta", 0))
     adicionales = int(tipos.get("Op - Alta Adicional", 0))
-    traslados = int(tipos.get("Op - Traslado de domicilio", 0))
     cambios = int(tipos.get("Op - Cambio plan", 0))
-    motivos_adicionales = actividad.loc[
-        actividad["Tipo de tarea"] == "Op - Alta Adicional", "Motivo de tarea"
-    ].value_counts()
-
-    columnas = st.columns(5)
-    tarjeta(columnas[0], "Tareas cerradas", miles(total), f"en {dias} días · {round(total / dias)} por día")
-    tarjeta(columnas[1], "Altas", miles(altas), f"{round(altas / total * 100)} % del total")
-    tarjeta(
-        columnas[2],
-        "Altas adicionales",
-        miles(adicionales),
-        " · ".join(f"{cantidad} {motivo}" for motivo, cantidad in motivos_adicionales.items()) or "ninguna",
-    )
-    tarjeta(columnas[3], "Traslados", miles(traslados), f"y {cambios} cambios de plan")
+    motivos = actividad.loc[actividad["Tipo de tarea"] == "Op - Alta Adicional", "Motivo de tarea"].value_counts()
     if tecnicos is None:
-        tarjeta(columnas[4], "Técnicos activos", "—", "el archivo no trae el listado")
+        tarjeta_tecnicos = ("Técnicos activos", None, "el archivo no trae el listado")
     else:
-        sin_inicio = int(tecnicos["Estado inicio"].astype(str).str.lower().str.startswith("sin").sum())
-        detalle = "todos iniciaron labores" if sin_inicio == 0 else f"{sin_inicio} sin inicio de labores"
-        tarjeta(columnas[4], "Técnicos activos", miles(len(tecnicos)), detalle)
+        faltan = int(sin_inicio_de_labores().sum())
+        tarjeta_tecnicos = ("Técnicos activos", miles(len(tecnicos)),
+                            "todos iniciaron labores" if faltan == 0 else f"{faltan} sin inicio de labores")
+    tarjetas([
+        ("Tareas cerradas", miles(total), f"{round(total / dias)} por día en {dias} días"),
+        ("Altas", miles(altas), f"{round(altas / total * 100)} % del total"),
+        ("Altas adicionales", miles(adicionales),
+         " · ".join(f"{cantidad} {motivo}" for motivo, cantidad in motivos.items()) or "ninguna"),
+        ("Traslados", miles(int(tipos.get("Op - Traslado de domicilio", 0))), f"y {cambios} cambios de plan"),
+        tarjeta_tecnicos,
+    ])
 
+
+def mostrar_resumen():
     with st.container(border=True):
         st.subheader("Tareas cerradas por día")
         por_dia = actividad.groupby(actividad["Fecha Cierre"].dt.normalize()).size()
         st.caption(
-            "Altas, altas adicionales, traslados y cambios de plan; no incluye SSTT. "
+            "Altas, altas adicionales, traslados y cambios de plan (sin SSTT). "
             f"La línea gris es el promedio: {round(por_dia.mean())} por día."
         )
         st.altair_chart(grafico_por_dia(por_dia, "Tareas"), theme="streamlit", width="stretch")
 
     izquierda, derecha = st.columns(2)
-    with izquierda.container(border=True):
+    with izquierda.container(border=True, height=330):
         st.subheader("Técnicos sin inicio de labores")
         if tecnicos is None:
             st.caption("El archivo no trae el listado de técnicos.")
+        elif sin_inicio_de_labores().any():
+            tabla(tecnicos.loc[sin_inicio_de_labores(), ["Nombre Tecnico", "CT General"]])
         else:
-            sin_inicio = tecnicos["Estado inicio"].astype(str).str.lower().str.startswith("sin")
-            if sin_inicio.any():
-                st.dataframe(tecnicos.loc[sin_inicio, ["Nombre Tecnico", "CT General"]], hide_index=True, width="stretch")
-            else:
-                st.caption("Todos los técnicos iniciaron labores.")
-    with derecha.container(border=True):
+            linea_ok("Todos los técnicos iniciaron labores.")
+    with derecha.container(border=True, height=330):
         st.subheader("Técnicos con menos cierres")
         if tecnicos is None:
             st.caption("El archivo no trae el listado de técnicos.")
         else:
-            st.caption("Tareas cerradas en el período del archivo.")
-            st.dataframe(cierres_por_tecnico(actividad, tecnicos).head(5), hide_index=True, width="stretch")
+            st.caption("Los 5 con menos tareas cerradas en el período del archivo.")
+            tabla(cierres_por_tecnico(actividad, tecnicos).head(5))
+
+
+def linea_ok(texto):
+    st.markdown(f":green[:material/check_circle:] {texto}")
 
 
 def mostrar_cuadre(export):
@@ -286,38 +233,122 @@ def mostrar_cuadre(export):
     apk_total = export["apk_por_oferta"]
     if apk_total is not None:
         falta = faltan["apk"]
+        suma = int(apk_total.sum())
         if falta.empty:
-            st.success(f"Cuadre APK: las {len(apk_total)} ofertas del archivo cruzan con la actividad ({miles(int(apk_total.sum()))} APK de {miles(int(apk_total.sum()))}).")
+            linea_ok(f"APK: las {len(apk_total)} ofertas del archivo cruzan con la actividad ({miles(suma)} de {miles(suma)}).")
         else:
             st.warning(
-                f"Cuadre APK: {len(falta)} de {len(apk_total)} ofertas del archivo de APK no aparecen en la actividad, "
-                f"así que el reporte suma {miles(int(apk_total.sum() - falta.sum()))} APK de {miles(int(apk_total.sum()))}."
+                f"APK: {len(falta)} de {len(apk_total)} ofertas del archivo de APK no aparecen en la actividad, "
+                f"así que el reporte suma {miles(int(suma - falta.sum()))} APK de {miles(suma)}."
             )
             with st.expander("Ver ofertas de APK que no cruzan"):
-                st.dataframe(falta.rename("APK").rename_axis("Cod OF").reset_index(), hide_index=True)
+                tabla(falta.rename("APK").rename_axis("Cod OF").reset_index())
     materiales = export["materiales"]
     if materiales is not None:
         falta = faltan["materiales"]
         routers = int(materiales.clip(lower=0).sum())
         if falta.empty:
-            st.success(f"Cuadre routers: las {len(materiales)} tareas con routers cruzan con la actividad ({routers} routers de {routers}).")
+            linea_ok(f"Routers: las {len(materiales)} tareas con routers cruzan con la actividad ({routers} de {routers}).")
         else:
             st.warning(
-                f"Cuadre routers: {len(falta)} de {len(materiales)} tareas con routers no aparecen en la actividad, "
+                f"Routers: {len(falta)} de {len(materiales)} tareas con routers no aparecen en la actividad, "
                 f"así que el reporte suma {routers - int(falta.clip(lower=0).sum())} routers de {routers}."
             )
             with st.expander("Ver tareas con routers que no cruzan"):
-                st.dataframe(falta.astype(int).rename("Routers").rename_axis("MTA").reset_index(), hide_index=True)
+                tabla(falta.astype(int).rename("Router").rename_axis("MTA").reset_index())
+
+
+# Opción que ve el usuario -> columna del reporte.
+AGRUPACIONES = {
+    "Centro técnico": "CT específico",
+    "Tipo de tarea": "Tipo tarea",
+    "Motivo": "Motivo",
+    "Técnico": "Técnico",
+    "Fecha de cierre": "Fecha cierre",
+}
+
+
+def mostrar_detalle(reporte):
+    def total(columna, fuente):
+        if reporte[columna].notna().any():
+            return miles(int(reporte[columna].sum())), fuente
+        return None, "sin archivo"
+
+    tarjetas([
+        ("Órdenes (OF)", miles(len(reporte)), f"a partir de {miles(len(actividad))} tareas"),
+        ("Decos adicionales", *total("Deco adi", "según el motivo del alta adicional")),
+        ("Routers", *total("Router", "archivo de Materiales")),
+        ("APK", *total("APK", "archivo de APK")),
+    ])
+
+    with st.container(border=True):
+        st.subheader("Cuadre contra los archivos fuente")
+        if not st.session_state.get("export"):
+            st.caption("Router y APK quedan vacíos: no vienen en el archivo de actividad. "
+                       "Subí los archivos de Materiales y APK para completarlos.")
+        elif export is not None:
+            for parte, columna, nombre in (("materiales", "Router", "Materiales"), ("apk", "APK", "APK")):
+                desde, hasta = export[f"{parte}_desde"], export[f"{parte}_hasta"]
+                if pd.isna(desde):
+                    st.caption(f"No hay archivo de {nombre}: la columna {columna} queda vacía.")
+                    continue
+                fuera = int(reporte[columna].isna().sum())
+                if fuera:
+                    st.warning(
+                        f"{fuera} órdenes quedaron sin {columna} porque su fecha de cierre está fuera del período "
+                        f"del archivo de {nombre} ({desde:%d-%m-%Y} al {hasta:%d-%m-%Y})."
+                    )
+            mostrar_cuadre(export)
+
+    with st.container(border=True):
+        st.subheader("Detalle por orden")
+        tabla(reporte, alto=460)
+        st.download_button("Descargar reporte en Excel", data=a_excel(reporte), file_name="reporte_instalaciones.xlsx",
+                           mime=MIME_EXCEL, type="primary", icon=":material/download:")
+
+
+def mostrar_dinamica(reporte):
+    columna_selector, _ = st.columns([1, 2])
+    opcion = columna_selector.selectbox("Agrupar por", list(AGRUPACIONES))
+    agrupar_por, nombre = AGRUPACIONES[opcion], opcion.lower()
+
+    datos = reporte.copy()
+    datos[agrupar_por] = datos[agrupar_por].fillna("(sin dato)")
+    agregaciones = {"OF": ("Cod OF", "count")}
+    for columna in ("Deco adi", "Router", "APK"):
+        if reporte[columna].notna().any():
+            agregaciones[columna] = (columna, "sum")
+    resumen = datos.groupby(agrupar_por).agg(**agregaciones).reset_index()
+    por_fecha = agrupar_por == "Fecha cierre"
+    resumen = resumen.sort_values(agrupar_por) if por_fecha else resumen.sort_values("OF", ascending=False)
+
+    if por_fecha:
+        with st.container(border=True):
+            st.subheader("Órdenes por día")
+            serie = resumen.set_index(pd.to_datetime(resumen["Fecha cierre"]))["OF"]
+            st.altair_chart(grafico_por_dia(serie, "Órdenes"), theme="streamlit", width="stretch")
+        lado_tabla = st.container()
+    else:
+        lado_grafico, lado_tabla = st.columns([3, 2])
+        with lado_grafico.container(border=True):
+            st.subheader(f"Órdenes por {nombre}")
+            if len(resumen) > MAXIMO_BARRAS:
+                st.caption(f"Los {MAXIMO_BARRAS} con más órdenes; la tabla tiene los {len(resumen)}.")
+            st.altair_chart(grafico_ranking(resumen, agrupar_por, "OF", "Órdenes"), theme="streamlit", width="stretch")
+    with lado_tabla.container(border=True):
+        st.subheader(f"Resumen por {nombre}")
+        tabla(resumen, alto=min(460, 35 * len(resumen) + 40))
+        st.download_button("Descargar tabla dinámica", data=a_excel(resumen), file_name="tabla_dinamica.xlsx",
+                           mime=MIME_EXCEL, icon=":material/download:")
 
 
 def pagina_reportes():
     if es_admin:
-        columna_actividad, columna_export = st.columns(2)
-        cuadro_de_carga(columna_actividad, "actividad", "Archivo de actividad")
-        cuadro_de_carga(columna_export, "export", "Archivos de Materiales y APK — opcional, podés subir varios", varios=True)
-    elif st.session_state.get("actividad"):
-        en_uso = [a["nombre"] for a in (st.session_state.get("actividad") or []) + (st.session_state.get("export") or [])]
-        st.caption(f"Mostrando: {', '.join(en_uso)}. Para ver otros archivos, entrá a Historial.")
+        with st.expander("Cargar o reemplazar archivos", expanded=actividad is None, icon=":material/upload_file:"):
+            columna_actividad, columna_export = st.columns(2)
+            cuadro_de_carga(columna_actividad, "actividad", "Archivo de actividad")
+            cuadro_de_carga(columna_export, "export", "Archivos de Materiales y APK (opcional, podés subir varios)",
+                            varios=True)
     for mostrar, mensaje in avisos:
         mostrar(mensaje)
 
@@ -328,106 +359,20 @@ def pagina_reportes():
         st.warning("El archivo de actividad no tiene altas, altas adicionales, traslados ni cambios de plan.")
         return
 
+    fechas = actividad["Fecha Cierre"]
+    en_uso = [a["nombre"] for a in (st.session_state.get("actividad") or []) + (st.session_state.get("export") or [])]
+    st.caption(f"Actividad del {fechas.min():%d-%m-%Y} al {fechas.max():%d-%m-%Y} · Archivos: {', '.join(en_uso)}"
+               + ("" if es_admin else " · Para ver otros, entrá a Historial."))
+    indicadores_operativos()
+
     reporte = construir_reporte(actividad, export)
-
-    def total(columna):
-        return int(reporte[columna].sum()) if reporte[columna].notna().any() else "—"
-
-    columnas_extra = ["Deco adi", "Router", "APK"]
-    tab_resumen, tab_reporte, tab_dinamica = st.tabs(["Resumen", "Detalle por orden", "Tabla dinámica"])
-
+    tab_resumen, tab_detalle, tab_dinamica = st.tabs(["Resumen", "Detalle por orden", "Tabla dinámica"])
     with tab_resumen:
         mostrar_resumen()
-
-    with tab_reporte:
-        st.success(f"Reporte generado: {len(reporte)} órdenes (OF) a partir de {len(actividad)} tareas.")
-
-        if not st.session_state.get("export"):
-            st.info("Router y APK quedan vacíos: no vienen en el archivo de actividad. Subí los archivos de Materiales y APK para completarlos.")
-        elif export is not None:
-            if export["materiales"] is None:
-                st.info("No subiste el archivo de materiales: la columna Router queda vacía.")
-            if export["apk_por_oferta"] is None:
-                st.info("No subiste el archivo de APK: la columna APK queda vacía.")
-            for parte, columna in (("materiales", "Router"), ("APK", "APK")):
-                desde, hasta = export[f"{parte.lower()}_desde"], export[f"{parte.lower()}_hasta"]
-                fuera = int(reporte[columna].isna().sum())
-                if pd.notna(desde) and fuera:
-                    st.warning(
-                        f"{fuera} órdenes quedaron sin {columna} porque su fecha de cierre está fuera del período "
-                        f"del archivo de {parte} ({desde:%d-%m-%Y} al {hasta:%d-%m-%Y})."
-                    )
-            mostrar_cuadre(export)
-
-        tipos_presentes = sum(1 for columna in columnas_extra if reporte[columna].fillna(0).gt(0).any())
-        hay_datos_extra = any(reporte[columna].notna().any() for columna in columnas_extra)
-
-        metrica1, metrica2, metrica3, metrica4, metrica5 = st.columns(5)
-        metrica1.metric("Órdenes (OF) procesadas", miles(len(reporte)), border=True)
-        metrica2.metric("Deco adi", total("Deco adi"), border=True)
-        metrica3.metric("Router", total("Router"), border=True)
-        metrica4.metric("APK", total("APK"), border=True)
-        metrica5.metric("Tipos de producto distintos", tipos_presentes if hay_datos_extra else "—", border=True)
-
-        with st.container(border=True):
-            st.subheader("Detalle por orden")
-            st.dataframe(reporte, width="stretch")
-
-        st.download_button(
-            label="Descargar reporte en Excel",
-            data=a_excel(reporte),
-            file_name="reporte_instalaciones.xlsx",
-            mime=MIME_EXCEL,
-            type="primary",
-        )
-
+    with tab_detalle:
+        mostrar_detalle(reporte)
     with tab_dinamica:
-        columnas_agrupables = ["CT específico", "Tipo tarea", "Motivo", "Técnico", "Fecha cierre"]
-
-        with st.container(border=True):
-            columna_selector, _ = st.columns([1, 2])
-            with columna_selector:
-                agrupar_por = st.selectbox("Agrupar por", columnas_agrupables)
-
-        st.write("")
-
-        base = reporte.copy()
-        base[agrupar_por] = base[agrupar_por].fillna("(sin dato)")
-
-        agregaciones = {"OF": ("Cod OF", "count")}
-        for columna in columnas_extra:
-            if reporte[columna].notna().any():
-                agregaciones[columna] = (columna, "sum")
-
-        resumen_dinamico = base.groupby(agrupar_por).agg(**agregaciones).reset_index()
-        if agrupar_por == "Fecha cierre":
-            resumen_dinamico = resumen_dinamico.sort_values(agrupar_por)
-        else:
-            resumen_dinamico = resumen_dinamico.sort_values("OF", ascending=False)
-
-        st.write("")
-
-        with st.container(border=True):
-            st.subheader(f"Resumen por {agrupar_por}")
-            st.dataframe(resumen_dinamico, width="stretch")
-            st.download_button(
-                label="Descargar tabla dinámica",
-                data=a_excel(resumen_dinamico),
-                file_name="tabla_dinamica.xlsx",
-                mime=MIME_EXCEL,
-            )
-
-        st.write("")
-
-        with st.container(border=True):
-            st.subheader(f"Órdenes por {agrupar_por}")
-            if agrupar_por == "Fecha cierre":
-                por_dia = resumen_dinamico.set_index(pd.to_datetime(resumen_dinamico["Fecha cierre"]))["OF"]
-                st.altair_chart(grafico_por_dia(por_dia, "Órdenes"), theme="streamlit", width="stretch")
-            else:
-                if len(resumen_dinamico) > MAXIMO_BARRAS:
-                    st.caption(f"Los {MAXIMO_BARRAS} con más órdenes. La tabla de arriba tiene todos.")
-                st.altair_chart(grafico_ranking(resumen_dinamico, agrupar_por), theme="streamlit", width="stretch")
+        mostrar_dinamica(reporte)
 
 
 def pagina_tecnicos():
@@ -435,40 +380,36 @@ def pagina_tecnicos():
         st.info("Subí el archivo de actividad en Reportes: trae el listado de técnicos.")
         return
 
-    sin_inicio = tecnicos["Estado inicio"].astype(str).str.lower().str.startswith("sin")
-
-    metrica1, metrica2, metrica3, metrica4 = st.columns(4)
-    metrica1.metric("Técnicos activos", len(tecnicos), border=True)
-    metrica2.metric("Con inicio de labores", int((~sin_inicio).sum()), border=True)
-    metrica3.metric("Sin inicio de labores", int(sin_inicio.sum()), border=True)
-    metrica4.metric("Centros técnicos", tecnicos["CT General"].nunique(), border=True)
+    sin_inicio = sin_inicio_de_labores()
+    tarjetas([
+        ("Técnicos activos", miles(len(tecnicos)), "en el listado del archivo"),
+        ("Con inicio de labores", miles(int((~sin_inicio).sum())), f"{round((~sin_inicio).mean() * 100)} % del total"),
+        ("Sin inicio de labores", miles(int(sin_inicio.sum())), "según el archivo"),
+        ("Centros técnicos", miles(tecnicos["CT General"].nunique()), "con técnicos en el listado"),
+    ])
 
     with st.container(border=True):
-        busqueda = st.text_input("Buscar técnico (nombre o correo)")
-        filtro1, filtro2 = st.columns(2)
-        centros = filtro1.multiselect("CT General", sorted(tecnicos["CT General"].dropna().unique()))
-        estados = filtro2.multiselect("Estado inicio", sorted(tecnicos["Estado inicio"].dropna().unique()))
+        busqueda, filtro1, filtro2 = st.columns([2, 1, 1])
+        texto = busqueda.text_input("Buscar técnico", placeholder="Nombre o correo")
+        centros = filtro1.multiselect("Centro técnico", sorted(tecnicos["CT General"].dropna().unique()), placeholder="Todos")
+        estados = filtro2.multiselect("Inicio de labores", sorted(tecnicos["Estado inicio"].dropna().unique()), placeholder="Todos")
 
     vista = tecnicos
     if centros:
         vista = vista[vista["CT General"].isin(centros)]
     if estados:
         vista = vista[vista["Estado inicio"].isin(estados)]
-    if busqueda:
-        texto = busqueda.lower()
+    if texto:
+        texto = texto.lower()
         coincide = vista["Nombre Tecnico"].astype(str).str.lower().str.contains(texto, regex=False)
         coincide = coincide | vista["Correo"].astype(str).str.lower().str.contains(texto, regex=False)
         vista = vista[coincide]
 
     with st.container(border=True):
         st.subheader(f"Listado de técnicos ({len(vista)})")
-        st.dataframe(vista, width="stretch")
-        st.download_button(
-            label="Descargar listado de técnicos",
-            data=a_excel(vista),
-            file_name="tecnicos.xlsx",
-            mime=MIME_EXCEL,
-        )
+        tabla(vista, alto=520)
+        st.download_button("Descargar listado de técnicos", data=a_excel(vista), file_name="tecnicos.xlsx",
+                           mime=MIME_EXCEL, icon=":material/download:")
 
 
 def pagina_historial():

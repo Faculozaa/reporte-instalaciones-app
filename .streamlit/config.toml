@@ -1,13 +1,22 @@
 [theme]
 primaryColor = "#00A9B7"
 font = "sans serif"
+baseRadius = "0.5rem"
+headingFontSizes = ["1.6rem", "1.2rem", "1.05rem"]
+headingFontWeights = [700, 600, 600]
 
 [theme.light]
 backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#F4F5F7"
 textColor = "#1F2328"
+borderColor = "#E3E6EA"
+dataframeBorderColor = "#E3E6EA"
+dataframeHeaderBackgroundColor = "#F4F5F7"
 
 [theme.dark]
 backgroundColor = "#16181D"
 secondaryBackgroundColor = "#22252B"
 textColor = "#E6E8EB"
+borderColor = "#30343B"
+dataframeBorderColor = "#30343B"
+dataframeHeaderBackgroundColor = "#22252B"
