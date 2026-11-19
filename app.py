@@ -1,6 +1,7 @@
 import re
 from io import BytesIO
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -22,6 +23,51 @@ st.set_page_config(
 
 MIME_EXCEL = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 ACENTO = "#00A9B7"
+MAXIMO_BARRAS = 15
+
+
+def modo_oscuro():
+    return st.context.theme.type == "dark"
+
+
+def color_barras():
+    # El turquesa de la marca no llega al contraste mínimo (3:1) sobre fondo blanco: en modo claro va un paso más oscuro.
+    return ACENTO if modo_oscuro() else "#0096A3"
+
+
+def color_texto():
+    # Las etiquetas dentro del gráfico no siguen el tema solas; mismos colores de texto que .streamlit/config.toml.
+    return "#E6E8EB" if modo_oscuro() else "#1F2328"
+
+
+def grafico_por_dia(serie, medida):
+    """Columnas por día, con el promedio como referencia y el día más alto marcado."""
+    datos = serie.rename_axis("Día").reset_index(name=medida)
+    promedio = datos[medida].mean()
+    x = alt.X("Día:T", title=None, axis=alt.Axis(format="%d-%m", labelAngle=0, grid=False))
+    y = alt.Y(f"{medida}:Q", title=None, axis=alt.Axis(tickCount=5))
+    columnas = alt.Chart(datos).mark_bar(
+        color=color_barras(), size=16, cornerRadiusTopLeft=4, cornerRadiusTopRight=4,
+    ).encode(x=x, y=y, tooltip=[alt.Tooltip("Día:T", format="%d-%m-%Y"), alt.Tooltip(f"{medida}:Q")])
+    pico = alt.Chart(datos.nlargest(1, medida)).mark_text(dy=-8, fontWeight="bold", color=color_texto()).encode(
+        x=x, y=y, text=f"{medida}:Q"
+    )
+    linea = alt.Chart(pd.DataFrame({"valor": [promedio]})).mark_rule(color="gray", opacity=0.6).encode(
+        y="valor:Q", tooltip=[alt.Tooltip("valor:Q", title="Promedio", format=".0f")]
+    )
+    return (columnas + linea + pico).properties(height=300)
+
+
+def grafico_ranking(tabla, categoria, medida="OF"):
+    """Barras horizontales ordenadas de mayor a menor, con el valor en la punta."""
+    datos = tabla.nlargest(MAXIMO_BARRAS, medida)
+    y = alt.Y(f"{categoria}:N", sort="-x", title=None, axis=alt.Axis(labelLimit=260))
+    x = alt.X(f"{medida}:Q", title=None, axis=alt.Axis(tickCount=5))
+    barras = alt.Chart(datos).mark_bar(
+        color=color_barras(), size=16, cornerRadiusTopRight=4, cornerRadiusBottomRight=4,
+    ).encode(x=x, y=y, tooltip=[alt.Tooltip(f"{categoria}:N"), alt.Tooltip(f"{medida}:Q")])
+    valores = barras.mark_text(align="left", dx=4, color=color_texto()).encode(text=f"{medida}:Q")
+    return (barras + valores).properties(height=28 * len(datos) + 20)
 TIPOS = {"actividad": "Actividad", "export": "Instalaciones"}
 
 
@@ -208,10 +254,12 @@ def mostrar_resumen():
 
     with st.container(border=True):
         st.subheader("Tareas cerradas por día")
-        st.caption("Altas, altas adicionales, traslados y cambios de plan. No incluye SSTT.")
-        por_dia = actividad.groupby(actividad["Fecha Cierre"].dt.date).size().rename("Tareas")
-        por_dia.index.name = "Día"
-        st.bar_chart(por_dia, color=ACENTO)
+        por_dia = actividad.groupby(actividad["Fecha Cierre"].dt.normalize()).size()
+        st.caption(
+            "Altas, altas adicionales, traslados y cambios de plan; no incluye SSTT. "
+            f"La línea gris es el promedio: {round(por_dia.mean())} por día."
+        )
+        st.altair_chart(grafico_por_dia(por_dia, "Tareas"), theme="streamlit", width="stretch")
 
     izquierda, derecha = st.columns(2)
     with izquierda.container(border=True):
@@ -373,7 +421,13 @@ def pagina_reportes():
 
         with st.container(border=True):
             st.subheader(f"Órdenes por {agrupar_por}")
-            st.bar_chart(resumen_dinamico.set_index(agrupar_por)["OF"], color=ACENTO)
+            if agrupar_por == "Fecha cierre":
+                por_dia = resumen_dinamico.set_index(pd.to_datetime(resumen_dinamico["Fecha cierre"]))["OF"]
+                st.altair_chart(grafico_por_dia(por_dia, "Órdenes"), theme="streamlit", width="stretch")
+            else:
+                if len(resumen_dinamico) > MAXIMO_BARRAS:
+                    st.caption(f"Los {MAXIMO_BARRAS} con más órdenes. La tabla de arriba tiene todos.")
+                st.altair_chart(grafico_ranking(resumen_dinamico, agrupar_por), theme="streamlit", width="stretch")
 
 
 def pagina_tecnicos():
