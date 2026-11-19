@@ -23,11 +23,47 @@ MIME_EXCEL = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 ACENTO = "#00A9B7"
 TIPOS = {"actividad": "Actividad", "export": "Instalaciones"}
 
-try:
-    base = historial.conectar()
-except Exception:
+
+def login_configurado():
+    try:
+        return "auth" in st.secrets
+    except Exception:
+        return False
+
+
+def control_de_acceso():
+    """Devuelve el rol del usuario: "administrador" o "lector"."""
+    if not login_configurado():
+        return "administrador"  # sin inicio de sesión configurado (uso local) la app queda abierta como antes
+    if not st.user.is_logged_in:
+        st.title("Operaciones Telconet")
+        st.write("Ingresá con tu correo para ver los reportes.")
+        st.button("Iniciar sesión", on_click=st.login, type="primary")
+        st.stop()
+    acceso = st.secrets.get("acceso", {})
+    correo = (st.user.email or "").lower()
+    for rol, lista in (("administrador", "administradores"), ("lector", "lectores")):
+        if correo in [c.lower() for c in acceso.get(lista, [])]:
+            return rol
+    st.title("Operaciones Telconet")
+    st.error(f"{correo} no tiene acceso a esta app. Pedile al administrador que te agregue.")
+    st.button("Cerrar sesión", on_click=st.logout)
+    st.stop()
+
+
+rol = control_de_acceso()
+es_admin = rol == "administrador"
+
+url_base = historial.url_configurada()
+if url_base and not url_base.startswith("sqlite") and not login_configurado():
     base = None
-    st.warning("No pude conectarme a la base de datos: el historial no está disponible por ahora.")
+    st.warning("La base de datos en la nube queda apagada hasta configurar el inicio de sesión, para no exponer los datos.")
+else:
+    try:
+        base = historial.conectar()
+    except Exception:
+        base = None
+        st.warning("No pude conectarme a la base de datos: el historial no está disponible por ahora.")
 
 
 def a_excel(tabla):
@@ -41,15 +77,18 @@ def miles(numero):
 
 
 # Al cambiar de página Streamlit borra lo que tenía el cuadro de carga, así que el archivo se guarda aparte en la sesión.
-def archivo_valido(clave, datos):
+def periodo(clave, datos):
+    """Fechas que cubre el archivo, o None si no es del tipo esperado."""
     try:
         if clave == "actividad":
-            leer_actividad(BytesIO(datos))
-        else:
-            leer_export_instalaciones([BytesIO(datos)])
-        return True
+            fechas = leer_actividad(BytesIO(datos))["Fecha Cierre"]
+            return fechas.min().date(), fechas.max().date()
+        partes = leer_export_instalaciones([BytesIO(datos)])
+        desdes = [d for d in (partes["materiales_desde"], partes["apk_desde"]) if pd.notna(d)]
+        hastas = [h for h in (partes["materiales_hasta"], partes["apk_hasta"]) if pd.notna(h)]
+        return min(desdes).date(), max(hastas).date()
     except Exception:
-        return False
+        return None
 
 
 def guardar_subida(clave):
@@ -60,11 +99,12 @@ def guardar_subida(clave):
         return
     for archivo in archivos:
         # Solo se guarda lo que se pudo leer, para no llenar el historial de archivos equivocados.
-        if not archivo_valido(clave, archivo.getvalue()):
+        fechas = periodo(clave, archivo.getvalue())
+        if fechas is None:
             st.toast(f"{archivo.name}: no es del tipo esperado, no lo guardé en el historial.")
             continue
         try:
-            nuevo = historial.guardar(base, archivo.name, clave, archivo.getvalue())
+            nuevo = historial.guardar(base, archivo.name, clave, archivo.getvalue(), *fechas)
             st.toast(f"{archivo.name}: " + ("guardado en el historial." if nuevo else "ya estaba en el historial."))
         except Exception:
             st.toast(f"{archivo.name}: no pude guardarlo en el historial; el reporte funciona igual.")
@@ -78,6 +118,21 @@ def cuadro_de_carga(columna, clave, etiqueta, varios=False):
         if guardados and not st.session_state.get(f"subida_{clave}"):
             st.caption(f"En uso: {', '.join(a['nombre'] for a in guardados)}. Para cambiarlo, subí otro.")
 
+
+def cargar_del_historial(ids):
+    cargados = {}
+    for id_archivo in ids:
+        nombre, tipo, datos = historial.leer(base, int(id_archivo))
+        cargados.setdefault(tipo, []).append({"nombre": nombre, "datos": datos})
+    if "actividad" in cargados:
+        cargados["actividad"] = cargados["actividad"][:1]
+    st.session_state.update(cargados)
+
+
+# Al entrar, cada persona ve los últimos archivos guardados; después puede elegir otros en Historial.
+if base is not None and not st.session_state.get("carga_inicial_hecha"):
+    st.session_state["carga_inicial_hecha"] = True
+    cargar_del_historial(historial.ultimos(base))
 
 actividad = tecnicos = export = None
 avisos = []
@@ -104,7 +159,10 @@ if st.session_state.get("export"):
 
 
 def pedir_actividad():
-    st.info("Subí el archivo de actividad para empezar.")
+    if es_admin:
+        st.info("Subí el archivo de actividad para empezar.")
+    else:
+        st.info("Todavía no hay archivos cargados. Cuando el administrador suba uno, lo vas a ver acá.")
 
 
 def tarjeta(columna, titulo, valor, detalle):
@@ -199,9 +257,13 @@ def mostrar_cuadre(export):
 
 
 def pagina_reportes():
-    columna_actividad, columna_export = st.columns(2)
-    cuadro_de_carga(columna_actividad, "actividad", "Archivo de actividad")
-    cuadro_de_carga(columna_export, "export", "Archivos de Materiales y APK — opcional, podés subir varios", varios=True)
+    if es_admin:
+        columna_actividad, columna_export = st.columns(2)
+        cuadro_de_carga(columna_actividad, "actividad", "Archivo de actividad")
+        cuadro_de_carga(columna_export, "export", "Archivos de Materiales y APK — opcional, podés subir varios", varios=True)
+    elif st.session_state.get("actividad"):
+        en_uso = [a["nombre"] for a in (st.session_state.get("actividad") or []) + (st.session_state.get("export") or [])]
+        st.caption(f"Mostrando: {', '.join(en_uso)}. Para ver otros archivos, entrá a Historial.")
     for mostrar, mensaje in avisos:
         mostrar(mensaje)
 
@@ -361,31 +423,29 @@ def pagina_historial():
 
     guardados["tipo"] = guardados["tipo"].map(TIPOS)
     guardados["subido_en"] = guardados["subido_en"].dt.strftime("%d-%m-%Y %H:%M")
+    for columna in ("desde", "hasta"):
+        guardados[columna] = pd.to_datetime(guardados[columna]).dt.strftime("%d-%m-%Y").fillna("—")
 
     with st.container(border=True):
         st.subheader(f"Archivos guardados ({len(guardados)})")
         st.dataframe(
-            guardados.drop(columns="id").rename(columns={"nombre": "Archivo", "tipo": "Tipo", "subido_en": "Subido el"}),
+            guardados.drop(columns="id").rename(columns={
+                "nombre": "Archivo", "tipo": "Tipo", "desde": "Desde", "hasta": "Hasta", "subido_en": "Subido el",
+            }),
             hide_index=True,
             width="stretch",
         )
 
     with st.container(border=True):
         etiquetas = {
-            str(fila.id): f"{fila.nombre} · {fila.tipo} · {fila.subido_en}" for fila in guardados.itertuples()
+            str(fila.id): f"{fila.nombre} · {fila.tipo} · {fila.desde} al {fila.hasta}" for fila in guardados.itertuples()
         }
         elegidos = st.multiselect(
-            "Volver a usar archivos (uno de actividad y, si querés, los de materiales y APK)",
+            "Ver otros archivos (uno de actividad y, si querés, los de materiales y APK)",
             list(etiquetas), format_func=etiquetas.get,
         )
         if st.button("Usar estos archivos", type="primary", disabled=not elegidos):
-            cargados = {}
-            for id_archivo in elegidos:
-                nombre, tipo, datos = historial.leer(base, int(id_archivo))
-                cargados.setdefault(tipo, []).append({"nombre": nombre, "datos": datos})
-            if "actividad" in cargados:
-                cargados["actividad"] = cargados["actividad"][:1]
-            st.session_state.update(cargados)
+            cargar_del_historial(elegidos)
             st.switch_page(reportes)
 
 
@@ -395,5 +455,9 @@ pagina = st.navigation([
     st.Page(pagina_tecnicos, title="Técnicos", icon=":material/group:"),
     st.Page(pagina_historial, title="Historial", icon=":material/history:"),
 ])
+if login_configurado():
+    with st.sidebar:
+        st.caption(f"{st.user.email} · {rol}")
+        st.button("Cerrar sesión", on_click=st.logout)
 st.title("Operaciones Telconet")
 pagina.run()

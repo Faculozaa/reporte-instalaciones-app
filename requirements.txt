@@ -2,3 +2,6 @@ streamlit
 pandas
 openpyxl
 sqlalchemy
+Authlib
+psycopg2-binary
+tzdata
