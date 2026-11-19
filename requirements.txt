@@ -1,7 +1,6 @@
-streamlit
+streamlit[auth]
 pandas
 openpyxl
 sqlalchemy
-Authlib
 psycopg2-binary
 tzdata
