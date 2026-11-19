@@ -100,7 +100,7 @@ if st.session_state.get("export"):
     except Exception:
         avisos.append((st.warning,
             "No pude leer los archivos de equipos y APK. Revisá que sean el de Materiales Utilizados y/o el de APK "
-            "(o el Excel que trae los dos). Mientras tanto, Router y APK quedan vacíos y Deco adi sale del motivo."))
+            "(o el Excel que trae los dos). Mientras tanto, Router y APK quedan vacíos."))
 
 
 def pedir_actividad():
@@ -186,16 +186,16 @@ def mostrar_cuadre(export):
     materiales = export["materiales"]
     if materiales is not None:
         falta = faltan["materiales"]
+        routers = int(materiales.clip(lower=0).sum())
         if falta.empty:
-            st.success(f"Cuadre materiales: las {len(materiales)} tareas con decos o routers cruzan con la actividad.")
+            st.success(f"Cuadre routers: las {len(materiales)} tareas con routers cruzan con la actividad ({routers} routers de {routers}).")
         else:
             st.warning(
-                f"Cuadre materiales: {len(falta)} de {len(materiales)} tareas con decos o routers no aparecen en la actividad, "
-                f"así que sus equipos ({int(falta['deco_neto'].clip(lower=0).sum())} decos y "
-                f"{int(falta['router_neto'].clip(lower=0).sum())} routers) no suman en el reporte."
+                f"Cuadre routers: {len(falta)} de {len(materiales)} tareas con routers no aparecen en la actividad, "
+                f"así que el reporte suma {routers - int(falta.clip(lower=0).sum())} routers de {routers}."
             )
-            with st.expander("Ver tareas de materiales que no cruzan"):
-                st.dataframe(falta.astype(int).rename_axis("MTA").reset_index(), hide_index=True)
+            with st.expander("Ver tareas con routers que no cruzan"):
+                st.dataframe(falta.astype(int).rename("Routers").rename_axis("MTA").reset_index(), hide_index=True)
 
 
 def pagina_reportes():
@@ -227,13 +227,10 @@ def pagina_reportes():
         st.success(f"Reporte generado: {len(reporte)} órdenes (OF) a partir de {len(actividad)} tareas.")
 
         if not st.session_state.get("export"):
-            st.info(
-                "Deco adi sale del motivo de la tarea (cada Alta Adicional \"Deco Mundo Go\" cuenta 1). "
-                "Router y APK quedan vacíos: no vienen en el archivo de actividad."
-            )
+            st.info("Router y APK quedan vacíos: no vienen en el archivo de actividad. Subí los archivos de Materiales y APK para completarlos.")
         elif export is not None:
             if export["materiales"] is None:
-                st.info("No subiste el archivo de materiales: Router queda vacío y Deco adi sale del motivo.")
+                st.info("No subiste el archivo de materiales: la columna Router queda vacía.")
             if export["apk_por_oferta"] is None:
                 st.info("No subiste el archivo de APK: la columna APK queda vacía.")
             for parte, columna in (("materiales", "Router"), ("APK", "APK")):

@@ -67,14 +67,11 @@ def leer_export_instalaciones(archivos):
 
     if materiales:
         materiales = pd.concat(materiales)
-        nombre = materiales["material_unificado"].astype(str).str.upper()
-        cantidad = materiales["material_usado_cantidad"]
+        es_router = materiales["material_unificado"].astype(str).str.upper().str.contains("ROUTER")
         # material_usado_cantidad es +1 al instalar y -1 al retirar, por eso se suma.
-        deco = cantidad[nombre.str.contains("DECODIFICADOR")].groupby(materiales["codigo_tarea"]).sum()
-        router = cantidad[nombre.str.contains("ROUTER")].groupby(materiales["codigo_tarea"]).sum()
-        por_mta = pd.concat([deco.rename("deco_neto"), router.rename("router_neto")], axis=1)
+        routers = materiales.loc[es_router].groupby("codigo_tarea")["material_usado_cantidad"].sum()
         fechas = pd.to_datetime(materiales["created_at"]).dt.normalize()
-        export.update(materiales=por_mta.reindex(columns=["deco_neto", "router_neto"]).fillna(0),
+        export.update(materiales=routers.rename("router_neto"),
                       materiales_desde=fechas.min(), materiales_hasta=fechas.max())
 
     if apks:
@@ -102,24 +99,20 @@ def construir_reporte(actividad, export=None):
     tareas = actividad.copy()
     tareas["es_adicional"] = tareas["Tipo de tarea"] == TIPO_ADICIONAL
     tareas["dia"] = tareas["Fecha Cierre"].dt.normalize()
-    tareas["deco_adi"] = np.nan
     tareas["router"] = np.nan
+
+    # El papá definió que los decos salen del archivo de actividad, no de materiales:
+    # cada Alta Adicional con motivo "Deco Mundo Go" es 1 deco adicional.
+    # shortcut: los traslados pueden traer 2 o 3 decos y el motivo no lo dice; no se cuentan hasta que lo aclaren.
+    tareas["deco_adi"] = (
+        tareas["es_adicional"] & (tareas["Motivo de tarea"].astype(str).str.strip().str.lower() == "deco mundo go")
+    ).astype(float)
 
     if export is not None and export["materiales"] is not None:
         # Fuera del periodo que cubre el archivo de materiales no hay dato, y eso no es lo mismo que cero.
         cubierta = ((tareas["dia"] >= export["materiales_desde"]) & (tareas["dia"] <= export["materiales_hasta"])).to_numpy()
-        materiales = export["materiales"].reindex(tareas["MTA"].to_numpy()).fillna(0)
-        deco_neto = materiales["deco_neto"].to_numpy()
-        router_neto = materiales["router_neto"].to_numpy()
-        # En una tarea base el primer decodificador viene incluido; en una Alta Adicional todo es adicional.
-        deco_adi = np.where(tareas["es_adicional"].to_numpy(), deco_neto, deco_neto - 1)
-        tareas["deco_adi"] = np.where(cubierta, np.clip(deco_adi, 0, None), np.nan)
+        router_neto = export["materiales"].reindex(tareas["MTA"].to_numpy()).fillna(0).to_numpy()
         tareas["router"] = np.where(cubierta, np.clip(router_neto, 0, None), np.nan)
-
-    # shortcut: sin archivo de equipos, el deco adicional sale del motivo (1 por Alta Adicional "Deco Mundo Go");
-    # no ve cantidades mayores a 1. Pasar a cantidades reales cuando haya archivo de equipos del mismo período.
-    deco_por_motivo = tareas["es_adicional"] & (tareas["Motivo de tarea"].astype(str).str.strip().str.lower() == "deco mundo go")
-    tareas["deco_adi"] = tareas["deco_adi"].fillna(deco_por_motivo.astype(float))
 
     filas = []
     for oferta, grupo in tareas.groupby("Código Oferta", sort=False):
