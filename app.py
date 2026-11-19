@@ -1,3 +1,4 @@
+import re
 from io import BytesIO
 
 import pandas as pd
@@ -61,9 +62,14 @@ if url_base and not url_base.startswith("sqlite") and not login_configurado():
 else:
     try:
         base = historial.conectar()
-    except Exception:
+    except Exception as error:
         base = None
         st.warning("No pude conectarme a la base de datos: el historial no está disponible por ahora.")
+        if es_admin:
+            # La contraseña de la base viene dentro de la dirección (usuario:clave@servidor): se tapa antes de mostrarla.
+            detalle = re.sub(r"://[^\s@]*@", "://***@", f"{type(error).__name__}: {error}")
+            with st.expander("Detalle técnico (solo administradores)"):
+                st.code(detalle[:600])
 
 
 def a_excel(tabla):

@@ -2,5 +2,5 @@ streamlit[auth]
 pandas
 openpyxl
 sqlalchemy
-psycopg2-binary
+psycopg[binary]
 tzdata
