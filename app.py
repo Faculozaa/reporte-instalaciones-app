@@ -134,7 +134,11 @@ def cargar_del_historial(ids):
 # Al entrar, cada persona ve los últimos archivos guardados; después puede elegir otros en Historial.
 if base is not None and not st.session_state.get("carga_inicial_hecha"):
     st.session_state["carga_inicial_hecha"] = True
-    cargar_del_historial(historial.ultimos(base))
+    try:
+        cargar_del_historial(historial.ultimos(base))
+    except Exception:
+        # Un corte de la base no tiene que impedir entrar: se avisa y se puede subir el archivo a mano.
+        st.warning("No pude traer los últimos archivos del historial. Recargá la página en unos segundos.")
 
 actividad = tecnicos = export = None
 avisos = []

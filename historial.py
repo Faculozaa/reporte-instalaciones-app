@@ -34,7 +34,9 @@ def conectar():
     # Sin base configurada en los secretos no hay historial: guardar en el disco de Streamlit Cloud se perdería al reiniciar.
     if url_configurada() is None:
         return None
-    motor = st.connection("sql").engine
+    # Neon apaga la base tras unos minutos sin uso y corta las conexiones abiertas.
+    # pool_pre_ping prueba cada conexión antes de usarla y, si está cortada, abre otra.
+    motor = st.connection("sql", pool_pre_ping=True).engine
     metadata.create_all(motor)
     return motor
 
