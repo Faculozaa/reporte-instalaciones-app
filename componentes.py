@@ -60,7 +60,7 @@ def estilos():
     .tc-cifra {{ padding:0.85rem 1.1rem 0.95rem; border-left:1px solid {c["linea"]}; }}
     .tc-cifra:first-child {{ border-left:0; padding-left:0; }}
     .tc-valor {{ font-family:{LETRA},sans-serif; font-stretch:112%; font-weight:700; font-size:1.9rem; line-height:1.1;
-                 font-variant-numeric:tabular-nums; color:{c["tinta"]}; }}
+                 color:{c["tinta"]}; }}
     .tc-vacia .tc-valor {{ color:{c["suave"]}; font-weight:500; }}
     .tc-nombre {{ font-weight:600; font-size:0.92rem; color:{c["tinta"]}; margin-top:0.3rem; }}
     .tc-detalle {{ font-size:0.85rem; color:{c["suave"]}; line-height:1.35; margin-top:0.15rem; }}
@@ -117,50 +117,98 @@ def linea_ok(texto):
     st.html(f'<div class="tc-ok"><b>✓</b>{escape(texto)}</div>')
 
 
-def _estilo(grafico):
+DIAS_SEMANA = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+# Vega escribe los miles con coma (2,511); en Chile se usa punto (2.511).
+PUNTO_DE_MILES = "replace(datum.label, /,/g, '.')"
+
+
+def _estilo(grafico, descripcion):
     c = colores()
     return (
-        grafico.configure(font=LETRA)
+        grafico.properties(description=descripcion)  # lo leen los lectores de pantalla
+        .configure(font=LETRA)
         .configure_axis(labelFontSize=12, labelColor=c["suave"], gridColor=c["linea"], domain=False, ticks=False,
                         titleFontSize=12)
         .configure_view(strokeWidth=0)
     )
 
 
+def _con_signo(numero):
+    return ("+" if numero >= 0 else "−") + miles(abs(numero))
+
+
 def grafico_por_dia(serie, medida):
-    """Columnas por día: todos los días del período (los que no tuvieron cierres en 0), pico marcado y promedio."""
+    """Columnas por día: todos los días del período (los que no tuvieron cierres en 0), pico marcado y promedio.
+
+    Al pasar el mouse o tocar un día, ese día queda resaltado y el resto se atenúa. La zona que reacciona es la
+    franja entera del día (no solo la columna), así también se puede tocar un día con muy pocas tareas.
+    """
     dias = pd.date_range(serie.index.min(), serie.index.max(), freq="D")
     datos = serie.reindex(dias, fill_value=0).rename_axis("fecha").reset_index(name=medida)
+    promedio = round(serie.mean())
     datos["Día"] = datos["fecha"].dt.strftime("%d-%m")
-    datos["Fecha"] = datos["fecha"].dt.strftime("%d-%m-%Y")
+    datos["Fecha"] = [f"{DIAS_SEMANA[f.weekday()].capitalize()} {f:%d-%m-%Y}" for f in datos["fecha"]]
+    datos["Valor"] = datos[medida].map(miles)
+    datos["Diferencia"] = (datos[medida] - promedio).map(_con_signo)
+    datos["tope"] = max(int(datos[medida].max()), 1) * 1.1
     c = colores()
+
+    encima = alt.selection_point(on="pointerover", clear="pointerout", fields=["Día"], empty=True)
     x = alt.X("Día:O", sort=None, title=None, axis=alt.Axis(labelAngle=0))
-    y = alt.Y(f"{medida}:Q", title=None, axis=alt.Axis(tickCount=5))
+    eje_y = alt.Axis(tickCount=5, labelExpr=PUNTO_DE_MILES)
+    y = alt.Y(f"{medida}:Q", title=None, axis=eje_y)
+    ayuda = [alt.Tooltip("Fecha:N"), alt.Tooltip("Valor:N", title=medida),
+             alt.Tooltip("Diferencia:N", title="Contra el promedio")]
+
+    zona = alt.Chart(datos).mark_bar(opacity=0).encode(
+        x=x, y=alt.Y("tope:Q", title=None, axis=eje_y), tooltip=ayuda
+    ).add_params(encima)
     columnas = alt.Chart(datos).mark_bar(
         color=c["barras"], size=24, cornerRadiusTopLeft=4, cornerRadiusTopRight=4,
-    ).encode(x=x, y=y, tooltip=[alt.Tooltip("Fecha:N"), alt.Tooltip(f"{medida}:Q")])
+    ).encode(x=x, y=y, opacity=alt.condition(encima, alt.value(1), alt.value(0.35)), tooltip=ayuda)
     pico = alt.Chart(datos.nlargest(1, medida)).mark_text(dy=-9, fontWeight="bold", fontSize=12, color=c["tinta"]).encode(
-        x=x, y=y, text=f"{medida}:Q"
+        x=x, y=y, text="Valor:N"
     )
-    promedio = alt.Chart(pd.DataFrame({"Promedio": [round(serie.mean())]})).mark_rule(
+    # Línea de referencia (no es grilla): punteada para que se lea como "nivel promedio", no como un dato más.
+    linea = alt.Chart(pd.DataFrame({"Promedio": [promedio]})).mark_rule(
         color=c["suave"], strokeWidth=1, strokeDash=[4, 3]
-    ).encode(y="Promedio:Q", tooltip=[alt.Tooltip("Promedio:Q")])
-    return _estilo((columnas + promedio + pico).properties(height=300))
+    ).encode(y="Promedio:Q")
+    descripcion = f"Columnas de {medida.lower()} por día; promedio {promedio} por día; máximo {datos[medida].max()}."
+    return _estilo((zona + columnas + linea + pico).properties(height=300), descripcion)
 
 
 def grafico_ranking(tabla, categoria, medida, titulo_medida):
-    """Barras horizontales de mayor a menor (las primeras MAXIMO_BARRAS), con el valor en la punta."""
+    """Barras horizontales de mayor a menor (las primeras MAXIMO_BARRAS), con el valor en la punta.
+
+    Como cada barra lleva su número, no hace falta eje ni grilla abajo: sería repetir lo mismo.
+    """
     c = colores()
-    datos = tabla.nlargest(MAXIMO_BARRAS, medida)
-    y = alt.Y(f"{categoria}:N", sort="-x", title=None, axis=alt.Axis(labelLimit=170, labelColor=c["tinta"]))
+    datos = tabla.nlargest(MAXIMO_BARRAS, medida).copy()
+    datos["Valor"] = datos[medida].map(miles)
     # 15 % de aire a la derecha para que el número de la barra más larga no se corte en pantallas angostas.
-    x = alt.X(f"{medida}:Q", title=None, axis=alt.Axis(tickCount=4),
-              scale=alt.Scale(domain=[0, float(datos[medida].max()) * 1.15], nice=False))
+    tope = max(float(datos[medida].max()), 1) * 1.15
+    datos["tope"] = tope
+
+    encima = alt.selection_point(on="pointerover", clear="pointerout", fields=[categoria], empty=True)
+    # Orden explícito (de mayor a menor): con la capa invisible de largo fijo, sort="-x" ya no ordena bien.
+    orden = datos[categoria].astype(str).tolist()
+    y = alt.Y(f"{categoria}:N", sort=orden, title=None, axis=alt.Axis(labelLimit=170, labelColor=c["tinta"]))
+    escala = alt.Scale(domain=[0, tope], nice=False)
+    x = alt.X(f"{medida}:Q", title=None, axis=None, scale=escala)
+    ayuda = [alt.Tooltip(f"{categoria}:N"), alt.Tooltip("Valor:N", title=titulo_medida)]
+
+    # La fila entera reacciona al mouse o al dedo, no solo la barra.
+    zona = alt.Chart(datos).mark_bar(opacity=0, size=30).encode(
+        x=alt.X("tope:Q", axis=None, scale=escala), y=y, tooltip=ayuda
+    ).add_params(encima)
     barras = alt.Chart(datos).mark_bar(
         color=c["barras"], size=20, cornerRadiusTopRight=4, cornerRadiusBottomRight=4,
-    ).encode(x=x, y=y, tooltip=[alt.Tooltip(f"{categoria}:N"), alt.Tooltip(f"{medida}:Q", title=titulo_medida)])
-    valores = barras.mark_text(align="left", dx=6, fontSize=12, color=c["tinta"]).encode(text=f"{medida}:Q")
-    return _estilo((barras + valores).properties(height=32 * len(datos) + 24))
+    ).encode(x=x, y=y, opacity=alt.condition(encima, alt.value(1), alt.value(0.35)), tooltip=ayuda)
+    valores = alt.Chart(datos).mark_text(align="left", dx=6, fontSize=12, color=c["tinta"]).encode(
+        x=x, y=y, text="Valor:N"
+    )
+    descripcion = f"Barras de {titulo_medida.lower()} por {categoria}, de mayor a menor."
+    return _estilo((zona + barras + valores).properties(height=32 * len(datos) + 8), descripcion)
 
 
 # Nombres para mostrar en pantalla. El Excel descargado mantiene los nombres de columna acordados con el papá.

@@ -16,7 +16,8 @@ dataframeBorderColor = "#D5DFE2"
 dataframeHeaderBackgroundColor = "#EEF3F4"
 
 [theme.dark]
-primaryColor = "#00A9B7"
+# El turquesa #00A9B7 con texto blanco da 2,85:1; este da 4,52:1 y se sigue viendo contra el fondo (3,81:1).
+primaryColor = "#00838F"
 backgroundColor = "#0E1D22"
 secondaryBackgroundColor = "#15282E"
 textColor = "#E3ECEE"

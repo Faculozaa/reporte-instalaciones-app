@@ -6,7 +6,7 @@ import streamlit as st
 
 import historial
 from componentes import (
-    MAXIMO_BARRAS, encabezado, estilos, grafico_por_dia, grafico_ranking, linea_ok, miles, periodo_en_palabras,
+    DIAS_SEMANA, MAXIMO_BARRAS, encabezado, estilos, grafico_por_dia, grafico_ranking, linea_ok, miles, periodo_en_palabras,
     seccion, tabla, tira,
 )
 from procesamiento import (
@@ -234,6 +234,13 @@ def mostrar_resumen():
     seccion("Tareas cerradas por día",
             f"La línea punteada es el promedio: {round(por_dia.mean())} por día. Tocá una columna (o pasá el mouse) para ver la fecha.")
     st.altair_chart(grafico_por_dia(por_dia, "Tareas"), theme="streamlit", width="stretch")
+    with st.expander("Ver los números por día"):
+        dias = por_dia.reindex(pd.date_range(por_dia.index.min(), por_dia.index.max(), freq="D"), fill_value=0)
+        tabla(pd.DataFrame({
+            "Fecha cierre": dias.index,
+            "Día": [DIAS_SEMANA[f.weekday()] for f in dias.index],
+            "Tareas": dias.values,
+        }))
 
     izquierda, derecha = st.columns(2, gap="large")
     with izquierda:
