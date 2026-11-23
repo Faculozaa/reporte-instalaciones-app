@@ -80,6 +80,37 @@ else:
                 st.code(detalle[:600])
 
 
+# Memoria (caché): mientras los archivos sean los mismos, no se vuelven a leer, cruzar ni armar los Excel
+# al cambiar de página o tocar un filtro. Streamlit reconoce cada archivo por su contenido: uno nuevo se procesa
+# solo la primera vez. max_entries limita cuántas versiones guarda, para no llenar la memoria del servidor.
+@st.cache_data(show_spinner=False, max_entries=20)
+def leer_actividad_guardada(datos):
+    return leer_actividad(BytesIO(datos))
+
+
+@st.cache_data(show_spinner=False, max_entries=20)
+def leer_tecnicos_guardados(datos):
+    return leer_tecnicos(BytesIO(datos))
+
+
+@st.cache_data(show_spinner=False, max_entries=20)
+def leer_equipos_guardados(datos):
+    return leer_export_instalaciones([BytesIO(d) for d in datos])
+
+
+@st.cache_data(show_spinner=False, max_entries=20)
+def reporte_guardado(datos_actividad, datos_equipos):
+    equipos = leer_equipos_guardados(datos_equipos) if datos_equipos else None
+    return construir_reporte(leer_actividad_guardada(datos_actividad), equipos)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def lista_del_historial(_motor):
+    # El guion bajo le dice a Streamlit que no use la conexión para reconocer la consulta. Se borra al guardar un archivo.
+    return historial.listar(_motor)
+
+
+@st.cache_data(show_spinner=False, max_entries=20)
 def a_excel(datos):
     buffer = BytesIO()
     datos.to_excel(buffer, index=False)
@@ -91,9 +122,9 @@ def periodo(clave, datos):
     """Fechas que cubre el archivo, o None si no es del tipo esperado."""
     try:
         if clave == "actividad":
-            fechas = leer_actividad(BytesIO(datos))["Fecha Cierre"]
+            fechas = leer_actividad_guardada(datos)["Fecha Cierre"]
             return fechas.min().date(), fechas.max().date()
-        partes = leer_export_instalaciones([BytesIO(datos)])
+        partes = leer_equipos_guardados((datos,))
         desdes = [d for d in (partes["materiales_desde"], partes["apk_desde"]) if pd.notna(d)]
         hastas = [h for h in (partes["materiales_hasta"], partes["apk_hasta"]) if pd.notna(h)]
         return min(desdes).date(), max(hastas).date()
@@ -115,6 +146,7 @@ def guardar_subida(clave):
             continue
         try:
             nuevo = historial.guardar(base, archivo.name, clave, archivo.getvalue(), *fechas)
+            lista_del_historial.clear()
             st.toast(f"{archivo.name}: " + ("guardado en el historial." if nuevo else "ya estaba en el historial."))
         except Exception:
             st.toast(f"{archivo.name}: no pude guardarlo en el historial; el reporte funciona igual.")
@@ -153,19 +185,19 @@ avisos = []
 if st.session_state.get("actividad"):
     contenido = st.session_state["actividad"][0]["datos"]
     try:
-        actividad = leer_actividad(BytesIO(contenido))
+        actividad = leer_actividad_guardada(contenido)
     except Exception:
         avisos.append((st.error,
             "No pude leer el archivo de actividad. Revisá que tenga el mismo formato de siempre "
             "(con la hoja de actividad del mes) y volvé a subirlo."))
     try:
-        tecnicos = leer_tecnicos(BytesIO(contenido))
+        tecnicos = leer_tecnicos_guardados(contenido)
     except Exception:
         tecnicos = None
 
 if st.session_state.get("export"):
     try:
-        export = leer_export_instalaciones([BytesIO(a["datos"]) for a in st.session_state["export"]])
+        export = leer_equipos_guardados(tuple(a["datos"] for a in st.session_state["export"]))
     except Exception:
         avisos.append((st.warning,
             "No pude leer los archivos de equipos y APK. Revisá que sean el de Materiales Utilizados y/o el de APK "
@@ -403,7 +435,8 @@ def pagina_reportes():
     if es_admin:
         carga_de_archivos()
 
-    reporte = construir_reporte(actividad, export)
+    datos_equipos = tuple(a["datos"] for a in st.session_state["export"]) if export is not None else ()
+    reporte = reporte_guardado(st.session_state["actividad"][0]["datos"], datos_equipos)
     tab_resumen, tab_detalle, tab_dinamica = st.tabs(["Resumen", "Detalle por orden", "Tabla dinámica"])
     with tab_resumen:
         mostrar_resumen()
@@ -461,7 +494,7 @@ def pagina_historial():
         st.info("El historial no está configurado: falta la base de datos en la configuración privada de la app.")
         return
 
-    guardados = historial.listar(base)
+    guardados = lista_del_historial(base).copy()
     if guardados.empty:
         encabezado("Historial de archivos")
         st.info("Todavía no hay archivos guardados. Se guardan solos al subirlos en Reportes.")

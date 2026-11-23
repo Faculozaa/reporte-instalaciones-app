@@ -114,33 +114,38 @@ def construir_reporte(actividad, export=None):
         router_neto = export["materiales"].reindex(tareas["MTA"].to_numpy()).fillna(0).to_numpy()
         tareas["router"] = np.where(cubierta, np.clip(router_neto, 0, None), np.nan)
 
-    filas = []
-    for oferta, grupo in tareas.groupby("Código Oferta", sort=False):
-        grupo = grupo.sort_values(["es_adicional", "Fecha Cierre"])
-        base = grupo.iloc[0] if not grupo.iloc[0]["es_adicional"] else None
-        resto = grupo.iloc[1:] if base is not None else grupo
-        referencia = base if base is not None else grupo.iloc[0]
+    # Todo de una vez (antes era un ciclo oferta por oferta, ~1,5 s con 2.500 tareas).
+    # Dentro de cada oferta: primero la tarea base (no adicional) y después las adicionales, por fecha de cierre.
+    tareas = tareas.sort_values(["es_adicional", "Fecha Cierre"], kind="stable")
+    primera = ~tareas.duplicated("Código Oferta")
+    referencias = tareas[primera].set_index("Código Oferta")  # la base si existe; si no, la primera adicional
+    tiene_base = ~referencias["es_adicional"]
+    # "Resto" = todas las tareas de la oferta menos la base (si la oferta no tiene base, todas).
+    resto = tareas[~primera | tareas["es_adicional"]].groupby("Código Oferta", sort=False)
+    por_oferta = tareas.groupby("Código Oferta", sort=False)
 
-        apk = np.nan
-        if export is not None and export["apk_por_oferta"] is not None and export["apk_desde"] <= referencia["dia"] <= export["apk_hasta"]:
-            apk = int(export["apk_por_oferta"].get(oferta, 0))
+    apk = pd.Series(np.nan, index=referencias.index)
+    if export is not None and export["apk_por_oferta"] is not None:
+        dentro = referencias["dia"].between(export["apk_desde"], export["apk_hasta"])
+        cantidades = export["apk_por_oferta"].reindex(referencias.index).fillna(0)
+        apk = cantidades.where(dentro, np.nan)
 
-        filas.append({
-            "Fecha cierre": referencia["Fecha Cierre"].date(),
-            "Cod OF": oferta,
-            "MTA": base["MTA"] if base is not None else None,
-            "MTA adi": " / ".join(resto["MTA"]) if len(resto) else None,
-            "Tipo tarea": referencia["Tipo de tarea"],
-            "Motivo": referencia["Motivo de tarea"],
-            "Técnico": base["Técnico Cierre"] if base is not None else None,
-            "Técnico adi": " / ".join(dict.fromkeys(resto["Técnico Cierre"])) if len(resto) else None,
-            "CT específico": referencia["CT Específico"],
-            "Deco adi": grupo["deco_adi"].sum(min_count=1),
-            "Router": grupo["router"].sum(min_count=1),
-            "APK": apk,
-        })
+    reporte = pd.DataFrame({
+        "Fecha cierre": referencias["Fecha Cierre"].dt.date,
+        "Cod OF": referencias.index,
+        "MTA": referencias["MTA"].where(tiene_base, None),
+        "MTA adi": resto["MTA"].agg(" / ".join),
+        "Tipo tarea": referencias["Tipo de tarea"],
+        "Motivo": referencias["Motivo de tarea"],
+        "Técnico": referencias["Técnico Cierre"].where(tiene_base, None),
+        "Técnico adi": resto["Técnico Cierre"].agg(lambda nombres: " / ".join(dict.fromkeys(nombres))),
+        "CT específico": referencias["CT Específico"],
+        "Deco adi": por_oferta["deco_adi"].sum(min_count=1),
+        "Router": por_oferta["router"].sum(min_count=1),
+        "APK": apk,
+    }, index=referencias.index)
 
-    reporte = pd.DataFrame(filas).sort_values(["Fecha cierre", "Cod OF"]).reset_index(drop=True)
+    reporte = reporte.sort_values(["Fecha cierre", "Cod OF"]).reset_index(drop=True)
     columnas_enteras = ["Deco adi", "Router", "APK"]
     reporte[columnas_enteras] = reporte[columnas_enteras].astype("Int64")
     return reporte
