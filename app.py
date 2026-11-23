@@ -232,7 +232,7 @@ def tira_operativa():
 def mostrar_resumen():
     por_dia = actividad.groupby(actividad["Fecha Cierre"].dt.normalize()).size()
     seccion("Tareas cerradas por día",
-            f"La línea punteada es el promedio: {round(por_dia.mean())} por día. Pasá el mouse por una columna para ver la fecha.")
+            f"La línea punteada es el promedio: {round(por_dia.mean())} por día. Tocá una columna (o pasá el mouse) para ver la fecha.")
     st.altair_chart(grafico_por_dia(por_dia, "Tareas"), theme="streamlit", width="stretch")
 
     izquierda, derecha = st.columns(2, gap="large")

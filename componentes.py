@@ -52,7 +52,7 @@ def estilos():
     .tc-titular {{ font-family:{LETRA},sans-serif; font-stretch:115%; font-weight:700; color:{c["tinta"]};
                    font-size:clamp(1.55rem, 2.6vw, 2.3rem); line-height:1.12; letter-spacing:-0.01em;
                    max-width:30ch; margin:0.4rem 0 0.55rem; }}
-    .tc-bajada {{ color:{c["suave"]}; font-size:0.95rem; line-height:1.5; max-width:78ch; margin:0; }}
+    .tc-bajada {{ color:{c["suave"]}; font-size:0.95rem; line-height:1.5; max-width:78ch; margin:0; overflow-wrap:anywhere; }}
     .tc-tira {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(165px, 1fr));
                 border-top:2px solid {c["tinta"]}; border-bottom:1px solid {c["linea"]}; margin:1.1rem 0 0.4rem; }}
     .tc-tira-secundaria {{ border-top:1px solid {c["linea"]}; margin-top:0.6rem; }}
@@ -68,6 +68,14 @@ def estilos():
     .tc-seccion-titulo {{ font-family:{LETRA},sans-serif; font-weight:650; font-size:1.08rem; color:{c["tinta"]}; }}
     .tc-seccion-nota {{ font-size:0.88rem; color:{c["suave"]}; line-height:1.45; margin-top:0.2rem; max-width:80ch; }}
     .tc-ok {{ color:{c["tinta"]}; font-size:0.95rem; margin:0.2rem 0; }}
+    /* Celular y tablet: la tira pasa a dos columnas parejas, con líneas entre filas en vez de entre columnas. */
+    @media (max-width: 900px) {{
+      .tc-tira {{ grid-template-columns:1fr 1fr; }}
+      .tc-cifra, .tc-cifra:first-child {{ border-left:0; padding:0.75rem 0.75rem 0.8rem 0; }}
+      .tc-cifra:nth-child(n+3) {{ border-top:1px solid {c["linea"]}; }}
+      .tc-valor {{ font-size:1.6rem; }}
+      .tc-tira-secundaria .tc-valor {{ font-size:1.4rem; }}
+    }}
     .tc-ok b {{ color:{c["ok"]}; font-weight:700; margin-right:0.35rem; }}
     </style>""")
 
@@ -144,8 +152,10 @@ def grafico_ranking(tabla, categoria, medida, titulo_medida):
     """Barras horizontales de mayor a menor (las primeras MAXIMO_BARRAS), con el valor en la punta."""
     c = colores()
     datos = tabla.nlargest(MAXIMO_BARRAS, medida)
-    y = alt.Y(f"{categoria}:N", sort="-x", title=None, axis=alt.Axis(labelLimit=240, labelColor=c["tinta"]))
-    x = alt.X(f"{medida}:Q", title=None, axis=alt.Axis(tickCount=4))
+    y = alt.Y(f"{categoria}:N", sort="-x", title=None, axis=alt.Axis(labelLimit=170, labelColor=c["tinta"]))
+    # 15 % de aire a la derecha para que el número de la barra más larga no se corte en pantallas angostas.
+    x = alt.X(f"{medida}:Q", title=None, axis=alt.Axis(tickCount=4),
+              scale=alt.Scale(domain=[0, float(datos[medida].max()) * 1.15], nice=False))
     barras = alt.Chart(datos).mark_bar(
         color=c["barras"], size=20, cornerRadiusTopRight=4, cornerRadiusBottomRight=4,
     ).encode(x=x, y=y, tooltip=[alt.Tooltip(f"{categoria}:N"), alt.Tooltip(f"{medida}:Q", title=titulo_medida)])
