@@ -44,9 +44,24 @@ def periodo_en_palabras(desde, hasta):
     return f"{desde.day} al {hasta.day} de {MESES[desde.month - 1]}"
 
 
+def vista_celular():
+    """True si el usuario prendió "Vista para celular" en el menú lateral (por defecto, vista de PC)."""
+    return st.session_state.get("vista_celular", False)
+
+
 def estilos():
     """Clases de las piezas propias. Se llama una vez por recarga, antes de dibujar la página."""
     c = colores()
+    # Vista para celular: la tira pasa a dos columnas parejas (líneas entre filas, no entre columnas),
+    # titular y cifras más chicos. En la vista de PC no se aplica, aunque la pantalla sea angosta.
+    reglas_celular = f"""
+      .tc-titular {{ font-size:1.5rem; max-width:none; }}
+      .tc-tira {{ grid-template-columns:1fr 1fr; }}
+      .tc-cifra, .tc-cifra:first-child {{ border-left:0; padding:0.75rem 0.75rem 0.8rem 0; }}
+      .tc-cifra:nth-child(n+3) {{ border-top:1px solid {c["linea"]}; }}
+      .tc-valor {{ font-size:1.6rem; }}
+      .tc-tira-secundaria .tc-valor {{ font-size:1.4rem; }}
+    """ if vista_celular() else ""
     st.html(f"""<style>
     .tc-marca {{ font-family:{LETRA},sans-serif; font-stretch:112%; font-weight:700; font-size:0.95rem; color:{c["tinta"]}; }}
     .tc-titular {{ font-family:{LETRA},sans-serif; font-stretch:115%; font-weight:700; color:{c["tinta"]};
@@ -68,14 +83,7 @@ def estilos():
     .tc-seccion-titulo {{ font-family:{LETRA},sans-serif; font-weight:650; font-size:1.08rem; color:{c["tinta"]}; }}
     .tc-seccion-nota {{ font-size:0.88rem; color:{c["suave"]}; line-height:1.45; margin-top:0.2rem; max-width:80ch; }}
     .tc-ok {{ color:{c["tinta"]}; font-size:0.95rem; margin:0.2rem 0; }}
-    /* Celular y tablet: la tira pasa a dos columnas parejas, con líneas entre filas en vez de entre columnas. */
-    @media (max-width: 900px) {{
-      .tc-tira {{ grid-template-columns:1fr 1fr; }}
-      .tc-cifra, .tc-cifra:first-child {{ border-left:0; padding:0.75rem 0.75rem 0.8rem 0; }}
-      .tc-cifra:nth-child(n+3) {{ border-top:1px solid {c["linea"]}; }}
-      .tc-valor {{ font-size:1.6rem; }}
-      .tc-tira-secundaria .tc-valor {{ font-size:1.4rem; }}
-    }}
+    {reglas_celular}
     .tc-ok b {{ color:{c["ok"]}; font-weight:700; margin-right:0.35rem; }}
     </style>""")
 
@@ -174,7 +182,8 @@ def grafico_por_dia(serie, medida):
         color=c["suave"], strokeWidth=1, strokeDash=[4, 3]
     ).encode(y="Promedio:Q")
     descripcion = f"Columnas de {medida.lower()} por día; promedio {promedio} por día; máximo {datos[medida].max()}."
-    return _estilo((zona + columnas + linea + pico).properties(height=300), descripcion)
+    alto = 220 if vista_celular() else 300
+    return _estilo((zona + columnas + linea + pico).properties(height=alto), descripcion)
 
 
 def grafico_ranking(tabla, categoria, medida, titulo_medida):
@@ -248,6 +257,8 @@ ANCHOS = {"Fecha cierre": 115, "CT General": 115, "CT Original": 135, "Tecnico I
 def tabla(datos, alto=None):
     """Tabla sin números de fila, con encabezados en español, fechas dd-mm-aaaa y celdas vacías en blanco."""
     vista = datos.copy()
+    if alto and vista_celular():
+        alto = min(alto, 380)  # en el celular, tablas más bajas para no tener que deslizar tanto
     config = {}
     for col in vista.columns:
         etiqueta = ETIQUETAS.get(col, col)

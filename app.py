@@ -18,10 +18,15 @@ from procesamiento import (
     sin_cruce,
 )
 
+# Vista para celular: opcional, por defecto la de PC. Queda guardada en el link (?vista=celular),
+# así se puede tener en el teléfono un acceso que abra directo en esa vista.
+if "vista_celular" not in st.session_state:
+    st.session_state["vista_celular"] = st.query_params.get("vista") == "celular"
+
 st.set_page_config(
     page_title="Operaciones Telconet",
     page_icon="📡",
-    layout="wide",
+    layout="centered" if st.session_state["vista_celular"] else "wide",
 )
 
 MIME_EXCEL = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -495,9 +500,15 @@ pagina = st.navigation([
     st.Page(pagina_tecnicos, title="Técnicos", icon=":material/group:"),
     st.Page(pagina_historial, title="Historial", icon=":material/history:"),
 ])
-if login_configurado():
-    with st.sidebar:
+with st.sidebar:
+    st.toggle("Vista para celular", key="vista_celular",
+              help="Acomoda las cifras, los gráficos y las tablas para pantallas chicas. Se guarda en el link.")
+    if login_configurado():
         st.caption(f"Sesión de {st.user.email} ({rol})")
         st.button("Cerrar sesión", on_click=st.logout)
+if st.session_state["vista_celular"]:
+    st.query_params["vista"] = "celular"
+else:
+    st.query_params.pop("vista", None)
 estilos()
 pagina.run()
