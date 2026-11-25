@@ -63,6 +63,9 @@ def estilos():
       .tc-tira-secundaria .tc-valor {{ font-size:1.4rem; }}
     """ if vista_celular() else ""
     st.html(f"""<style>
+    /* Titular y títulos de sección son títulos de verdad (h1 y h2) para los lectores de pantalla, sin el estilo de Streamlit.
+       Ojo: nunca escribir algo con forma de etiqueta (signos menor y mayor) dentro de este bloque: Streamlit lo borra entero. */
+    h1.tc-titular, h2.tc-seccion-titulo {{ padding:0; scroll-margin-top:0; }}
     .tc-marca {{ font-family:{LETRA},sans-serif; font-stretch:112%; font-weight:700; font-size:0.95rem; color:{c["tinta"]}; }}
     .tc-titular {{ font-family:{LETRA},sans-serif; font-stretch:115%; font-weight:700; color:{c["tinta"]};
                    font-size:clamp(1.55rem, 2.6vw, 2.3rem); line-height:1.12; letter-spacing:-0.01em;
@@ -80,7 +83,8 @@ def estilos():
     .tc-nombre {{ font-weight:600; font-size:0.92rem; color:{c["tinta"]}; margin-top:0.3rem; }}
     .tc-detalle {{ font-size:0.85rem; color:{c["suave"]}; line-height:1.35; margin-top:0.15rem; }}
     .tc-seccion {{ border-top:1px solid {c["linea"]}; padding-top:0.9rem; margin-top:0.5rem; }}
-    .tc-seccion-titulo {{ font-family:{LETRA},sans-serif; font-weight:650; font-size:1.08rem; color:{c["tinta"]}; }}
+    .tc-seccion-titulo {{ font-family:{LETRA},sans-serif; font-weight:650; font-size:1.08rem; color:{c["tinta"]};
+                          line-height:1.6; letter-spacing:normal; margin:0; }}
     .tc-seccion-nota {{ font-size:0.88rem; color:{c["suave"]}; line-height:1.45; margin-top:0.2rem; max-width:80ch; }}
     .tc-ok {{ color:{c["tinta"]}; font-size:0.95rem; margin:0.2rem 0; }}
     {reglas_celular}
@@ -92,7 +96,7 @@ def encabezado(titular, bajada=None):
     """Nombre de la app, titular en frase y, si hace falta, una bajada corta."""
     st.html(
         '<div class="tc-marca">Operaciones Telconet</div>'
-        f'<div class="tc-titular">{escape(titular)}</div>'
+        f'<h1 class="tc-titular">{escape(titular)}</h1>'
         + (f'<p class="tc-bajada">{escape(bajada)}</p>' if bajada else "")
     )
 
@@ -114,7 +118,7 @@ def tira(cifras, principal=True):
 
 def seccion(titulo, nota=None):
     st.html(
-        f'<div class="tc-seccion"><div class="tc-seccion-titulo">{escape(titulo)}</div>'
+        f'<div class="tc-seccion"><h2 class="tc-seccion-titulo">{escape(titulo)}</h2>'
         + (f'<div class="tc-seccion-nota">{escape(nota)}</div>' if nota else "")
         + "</div>"
     )
